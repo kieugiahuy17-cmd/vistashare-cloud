@@ -140,13 +140,44 @@ $("#uploadForm").addEventListener("submit",async e=>{
   submitButton.textContent="Đang tải lên...";
 
   try{
-    const formData=new FormData();
-    formData.append("image",state.selectedFile);
+const formData = new FormData();
 
-    const response=await fetch("/api/images",{
-      method:"POST",
-      body:formData
-    });
+formData.append(
+  "image",
+  state.selectedFile
+);
+
+formData.append(
+  "title",
+  $("#photoTitle").value.trim()
+);
+
+formData.append(
+  "category",
+  $("#photoCategory").value
+);
+
+formData.append(
+  "description",
+  $("#photoDescription").value.trim()
+);
+
+formData.append(
+  "author",
+  state.currentUser?.displayName ||
+  state.currentUser?.name ||
+  "Người dùng VistaShare"
+);
+
+formData.append(
+  "owner",
+  state.currentUser?.email || ""
+);
+
+const response = await fetch("/api/images", {
+  method: "POST",
+  body: formData
+});
 
     const result=await response.json();
 
@@ -155,21 +186,54 @@ $("#uploadForm").addEventListener("submit",async e=>{
     }
 
     const uploaded=result.image;
-    const photo={
-      id:uploaded.key||`upload-${Date.now()}`,
-      key:uploaded.key,
-      title:$("#photoTitle").value.trim()||uploaded.name||"Ảnh mới",
-      category:$("#photoCategory").value||"Đời sống",
-      description:$("#photoDescription").value.trim(),
-      src:uploaded.url||uploaded.imageUrl||uploaded.src,
-      author:state.currentUser?.name||"Người dùng VistaShare",
-      owner:state.currentUser?.email||"",
-      createdAt:uploaded.lastModified||new Date().toISOString(),
-      likes:0,
-      comments:[],
-      isUserUpload:true,
-      isCloud:true
-    };
+    const photo = {
+  id:
+    uploaded.key ||
+    `upload-${Date.now()}`,
+
+  key: uploaded.key,
+
+  title:
+    uploaded.title ||
+    $("#photoTitle").value.trim() ||
+    uploaded.name ||
+    "Ảnh mới",
+
+  category:
+    uploaded.category ||
+    $("#photoCategory").value ||
+    "Đời sống",
+
+  description:
+    uploaded.description ||
+    $("#photoDescription").value.trim() ||
+    "Không có mô tả.",
+
+  src:
+    uploaded.url ||
+    uploaded.imageUrl ||
+    uploaded.src,
+
+  author:
+    uploaded.author ||
+    state.currentUser?.displayName ||
+    state.currentUser?.name ||
+    "Người dùng VistaShare",
+
+  owner:
+    uploaded.owner ||
+    state.currentUser?.email ||
+    "",
+
+  createdAt:
+    uploaded.lastModified ||
+    new Date().toISOString(),
+
+  likes: 0,
+  comments: [],
+  isUserUpload: true,
+  isCloud: true
+};
 
     state.uploadedPhotos=state.uploadedPhotos.filter(p=>p.id!==photo.id);
     state.uploadedPhotos.unshift(photo);
@@ -277,25 +341,64 @@ async function loadImagesFromS3(){
         .map(photo=>[photo.key,photo])
     );
 
-    state.cloudPhotos=(result.images||[]).map((image,index)=>{
-      const saved=savedByKey.get(image.key)||{};
+    state.cloudPhotos = (result.images || []).map(
+  (image, index) => {
+    const saved =
+      savedByKey.get(image.key) || {};
 
-      return {
-        id:image.key||`cloud-${index}`,
-        key:image.key,
-        title:saved.title||image.name||"Ảnh trên S3",
-        category:saved.category||"Đời sống",
-        description:saved.description||"Ảnh được lưu trữ trên Amazon S3.",
-        src:image.url||image.imageUrl||image.src,
-        author:saved.author||"VistaShare",
-        owner:saved.owner||"",
-        createdAt:image.lastModified||new Date().toISOString(),
-        likes:saved.likes||0,
-        comments:saved.comments||[],
-        isUserUpload:true,
-        isCloud:true
-      };
-    });
+    return {
+      id:
+        image.key ||
+        `cloud-${index}`,
+
+      key: image.key,
+
+      title:
+        image.title ||
+        saved.title ||
+        image.name ||
+        "Ảnh trên S3",
+
+      category:
+        image.category ||
+        saved.category ||
+        "Đời sống",
+
+      description:
+        image.description ||
+        saved.description ||
+        "Ảnh được lưu trữ trên Amazon S3.",
+
+      src:
+        image.url ||
+        image.imageUrl ||
+        image.src,
+
+      author:
+        image.author ||
+        saved.author ||
+        "VistaShare",
+
+      owner:
+        image.owner ||
+        saved.owner ||
+        "",
+
+      createdAt:
+        image.lastModified ||
+        new Date().toISOString(),
+
+      likes:
+        saved.likes || 0,
+
+      comments:
+        saved.comments || [],
+
+      isUserUpload: true,
+      isCloud: true
+    };
+  }
+);
 
     renderPhotos();
   }catch(error){
