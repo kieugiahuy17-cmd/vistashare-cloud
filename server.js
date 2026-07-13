@@ -6,11 +6,12 @@ const express = require("express");
 const multer = require("multer");
 
 const {
-    S3Client,
-    PutObjectCommand,
-    ListObjectsV2Command,
-    GetObjectCommand,
-    DeleteObjectCommand
+  S3Client,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand
 } = require("@aws-sdk/client-s3");
 
 const {
@@ -124,32 +125,76 @@ app.get("/api/images", async (request, response, next) => {
             });
 
         const images = await Promise.all(
-            objects.map(async (object) => {
-                const signedUrl = await getSignedUrl(
-                    s3Client,
-
-                    new GetObjectCommand({
-                        Bucket: process.env.AWS_S3_BUCKET,
-                        Key: object.Key
-                    }),
-
-                    {
-                        expiresIn: 60 * 60
-                    }
-                );
-
-                return {
-                    key: object.Key,
-                    id: object.Key,
-                    name: getDisplayName(object.Key),
-                    url: signedUrl,
-                    src: signedUrl,
-                    imageUrl: signedUrl,
-                    size: object.Size || 0,
-                    lastModified: object.LastModified
-                };
+    objects.map(async (object) => {
+        /*
+         * ListObjectsV2 không trả về metadata tùy chỉnh.
+         * Vì vậy phải gọi HeadObject cho từng ảnh.
+         */
+        const headResult = await s3Client.send(
+            new HeadObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET,
+                Key: object.Key
             })
         );
+
+        const metadata = headResult.Metadata || {};
+
+        const signedUrl = await getSignedUrl(
+            s3Client,
+
+            new GetObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET,
+                Key: object.Key
+            }),
+
+            {
+                expiresIn: 60 * 60
+            }
+        );
+
+        return {
+            key: object.Key,
+            id: object.Key,
+
+            name: decodeMetadata(
+                metadata.originalname,
+                getDisplayName(object.Key)
+            ),
+
+            title: decodeMetadata(
+                metadata.title,
+                getDisplayName(object.Key)
+            ),
+
+            category: decodeMetadata(
+                metadata.category,
+                "Đời sống"
+            ),
+
+            description: decodeMetadata(
+                metadata.description,
+                "Ảnh được lưu trữ trên Amazon S3."
+            ),
+
+            author: decodeMetadata(
+                metadata.author,
+                "VistaShare"
+            ),
+
+            owner: decodeMetadata(
+                metadata.owner,
+                ""
+            ),
+
+            url: signedUrl,
+            src: signedUrl,
+            imageUrl: signedUrl,
+
+            size: object.Size || 0,
+            lastModified: object.LastModified
+        };
+    })
+);
 
         response.json({
             success: true,
@@ -192,6 +237,30 @@ app.post(
                 `${crypto.randomUUID()}-` +
                 `${safeOriginalName}${extension}`;
 
+            /*
+ * Lấy thông tin ảnh được frontend gửi qua FormData.
+ */
+            const title =
+                 request.body.title?.trim() ||
+                 request.file.originalname;
+
+            const category =
+                 request.body.category?.trim() ||
+                 "Đời sống";
+
+            const description =
+                request.body.description?.trim() ||
+                 "";
+
+            const author =
+                  request.body.author?.trim() ||
+                 "VistaShare";
+
+            const owner =
+                  request.body.owner?.trim() ||
+                "";
+
+
             await s3Client.send(
                 new PutObjectCommand({
                     Bucket: process.env.AWS_S3_BUCKET,
@@ -199,13 +268,26 @@ app.post(
                     Body: request.file.buffer,
                     ContentType: request.file.mimetype,
 
-                    Metadata: {
-                        originalname: encodeURIComponent(
-                            request.file.originalname
-                        )
-                    }
-                })
-            );
+                 Metadata: {
+                     originalname: encodeURIComponent(
+                         request.file.originalname
+                     ),
+
+                     title: encodeURIComponent(title),
+
+                    category: encodeURIComponent(category),
+
+                    description: encodeURIComponent(
+                        description
+                    ),
+
+                    author: encodeURIComponent(author),
+
+                    owner: encodeURIComponent(owner)
+                 }
+            })
+        );
+            
 
             const signedUrl = await getSignedUrl(
                 s3Client,
@@ -228,6 +310,12 @@ app.post(
                     key: objectKey,
                     id: objectKey,
                     name: request.file.originalname,
+                    
+                    title,
+                    category,
+                    description,
+                    author,
+                    owner,
                     url: signedUrl,
                     src: signedUrl,
                     imageUrl: signedUrl,
@@ -421,4 +509,15 @@ function getDisplayName(objectKey) {
     const fileName = objectKey.split("/").pop();
 
     return fileName || objectKey;
+}
+function decodeMetadata(value, fallback = "") {
+    if (!value) {
+        return fallback;
+    }
+
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
 }
