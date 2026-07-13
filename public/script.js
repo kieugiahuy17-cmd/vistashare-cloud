@@ -50,10 +50,10 @@ const rawPhotos = [
 const defaultPhotos = rawPhotos.map((p,i)=>({id:`default-${i}`,title:p[0],category:p[1],src:p[2],author:p[3],description:p[4],createdAt:new Date(Date.now()-i*86400000).toISOString(),likes:12+i*7,comments:[]}));
 
 const safeParse=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}};
-const state={uploadedPhotos:safeParse("vistaUploadedPhotos",[]),currentUser:safeParse("vistaCurrentUser",null),selectedDataUrl:"",activeCategory:"Tất cả",currentPhotoId:null,lastUploadedId:null};
+const state={uploadedPhotos:safeParse("vistaUploadedPhotos",[]),cloudPhotos:[],currentUser:safeParse("vistaCurrentUser",null),selectedDataUrl:"",selectedFile:null,activeCategory:"Tất cả",currentPhotoId:null,lastUploadedId:null};
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
-const allPhotos=()=>[...state.uploadedPhotos,...defaultPhotos];
+const allPhotos=()=>[...state.cloudPhotos,...state.uploadedPhotos.filter(p=>!p.isCloud),...defaultPhotos];
 const escapeHtml=(v="")=>String(v).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const formatDate=v=>new Intl.DateTimeFormat("vi-VN",{dateStyle:"medium",timeStyle:"short"}).format(new Date(v));
 
@@ -98,8 +98,8 @@ function renderPhotos(){const items=filteredPhotos();$("#gallery").innerHTML=ite
 function switchAuth(mode){const login=mode==="login";$("#loginForm").hidden=!login;$("#registerForm").hidden=login;$("#loginTab").classList.toggle("is-active",login);$("#registerTab").classList.toggle("is-active",!login);$("#loginError").textContent="";$("#registerError").textContent="";}
 function updateAuthUI(){const u=state.currentUser;$("#loginButton").hidden=!!u;$("#avatarButton").hidden=!u;$("#notificationButton").hidden=!u;$("#messageButton").hidden=!u;$("#profileMenu").hidden=true;$("#notificationPanel").hidden=true;if(u){const p=getUserProfile(u.email,u.name);state.currentUser={...u,...p};localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));applyAvatar($("#avatarButton"),p);applyAvatar($("#menuAvatar"),p);$("#profileName").textContent=p.displayName||p.name;$("#profileEmail").textContent=p.email;renderNotificationBadge();renderMessageBadge();}}
 
-function resetUpload(){state.selectedDataUrl="";$("#uploadForm").reset();$("#imagePreview").hidden=true;$("#uploadPlaceholder").hidden=false;$("#dropZone").classList.remove("has-image");$("#uploadError").textContent="";}
-function processFile(file){const err=$("#uploadError");err.textContent="";if(!file)return;if(!["image/jpeg","image/png","image/webp","image/gif"].includes(file.type))return err.textContent="Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF.";if(file.size>8*1024*1024)return err.textContent="Ảnh vượt quá 8 MB.";const r=new FileReader();r.onload=()=>{state.selectedDataUrl=r.result;$("#imagePreview").src=r.result;$("#imagePreview").hidden=false;$("#uploadPlaceholder").hidden=true;$("#dropZone").classList.add("has-image");if(!$("#photoTitle").value)$("#photoTitle").value=file.name.replace(/\.[^.]+$/,"")};r.readAsDataURL(file);}
+function resetUpload(){state.selectedDataUrl="";state.selectedFile=null;$("#uploadForm").reset();$("#imagePreview").hidden=true;$("#imagePreview").removeAttribute("src");$("#uploadPlaceholder").hidden=false;$("#dropZone").classList.remove("has-image");$("#uploadError").textContent="";}
+function processFile(file){const err=$("#uploadError");err.textContent="";if(!file)return;if(!["image/jpeg","image/png","image/webp","image/gif"].includes(file.type))return err.textContent="Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF.";if(file.size>8*1024*1024)return err.textContent="Ảnh vượt quá 8 MB.";state.selectedFile=file;const r=new FileReader();r.onload=()=>{state.selectedDataUrl=r.result;$("#imagePreview").src=r.result;$("#imagePreview").hidden=false;$("#uploadPlaceholder").hidden=true;$("#dropZone").classList.add("has-image");if(!$("#photoTitle").value)$("#photoTitle").value=file.name.replace(/\.[^.]+$/,"")};r.readAsDataURL(file);}
 
 function updateGeneratedLink(){const p=getPhoto(state.lastUploadedId);if(!p)return;const type=$("#linkType").value;const direct=p.src;const map={direct,html:`<a href="${direct}" target="_blank"><img src="${direct}" alt="${escapeHtml(p.title)}"></a>`,thumbnail:`<a href="${direct}" target="_blank"><img src="${direct}" alt="${escapeHtml(p.title)}" width="240"></a>`,bbcode:`[url=${direct}][img]${direct}[/img][/url]`};$("#generatedLink").value=map[type];}
 
@@ -125,7 +125,76 @@ $("#registerForm").addEventListener("submit",e=>{e.preventDefault();const name=$
 $("#loginForm").addEventListener("submit",e=>{e.preventDefault();const email=$("#loginEmail").value.trim().toLowerCase(),pass=$("#loginPassword").value,users=safeParse("vistaUsers",[]),u=users.find(x=>x.email===email&&x.password===pass);if(!u)return $("#loginError").textContent="Email hoặc mật khẩu không chính xác.";const profile=getUserProfile(u.email,u.name);state.currentUser={name:u.name,email:u.email,...profile};localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));updateAuthUI();closeModal("authModal");e.target.reset();toast(`Xin chào ${u.name}.`);});
 
 $("#photoInput").addEventListener("change",e=>processFile(e.target.files[0]));["dragenter","dragover"].forEach(n=>$("#dropZone").addEventListener(n,e=>{e.preventDefault();$("#dropZone").classList.add("is-dragging")}));["dragleave","drop"].forEach(n=>$("#dropZone").addEventListener(n,e=>{e.preventDefault();$("#dropZone").classList.remove("is-dragging")}));$("#dropZone").addEventListener("drop",e=>processFile(e.dataTransfer.files[0]));
-$("#uploadForm").addEventListener("submit",e=>{e.preventDefault();if(!state.selectedDataUrl)return $("#uploadError").textContent="Bạn chưa chọn ảnh.";const photo={id:`upload-${Date.now()}`,title:$("#photoTitle").value.trim(),category:$("#photoCategory").value,description:$("#photoDescription").value.trim(),src:state.selectedDataUrl,author:state.currentUser.name,owner:state.currentUser.email,createdAt:new Date().toISOString(),likes:0,comments:[],isUserUpload:true};state.uploadedPhotos.unshift(photo);try{persistPhotos()}catch{state.uploadedPhotos.shift();return $("#uploadError").textContent="Trình duyệt không đủ bộ nhớ. Hãy dùng ảnh nhỏ hơn hoặc kết nối S3."}state.lastUploadedId=photo.id;renderPhotos();closeModal("uploadModal");$("#successPreview").src=photo.src;$("#linkType").value="direct";updateGeneratedLink();setTimeout(()=>openModal("uploadSuccessModal"),180);});
+$("#uploadForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const errorEl=$("#uploadError");
+  errorEl.textContent="";
+
+  if(!state.selectedFile){
+    errorEl.textContent="Bạn chưa chọn ảnh.";
+    return;
+  }
+
+  const submitButton=e.currentTarget.querySelector('button[type="submit"]');
+  submitButton.disabled=true;
+  submitButton.textContent="Đang tải lên...";
+
+  try{
+    const formData=new FormData();
+    formData.append("image",state.selectedFile);
+
+    const response=await fetch("/api/images",{
+      method:"POST",
+      body:formData
+    });
+
+    const result=await response.json();
+
+    if(!response.ok){
+      throw new Error(result.message||"Không thể tải ảnh lên S3.");
+    }
+
+    const uploaded=result.image;
+    const photo={
+      id:uploaded.key||`upload-${Date.now()}`,
+      key:uploaded.key,
+      title:$("#photoTitle").value.trim()||uploaded.name||"Ảnh mới",
+      category:$("#photoCategory").value||"Đời sống",
+      description:$("#photoDescription").value.trim(),
+      src:uploaded.url||uploaded.imageUrl||uploaded.src,
+      author:state.currentUser?.name||"Người dùng VistaShare",
+      owner:state.currentUser?.email||"",
+      createdAt:uploaded.lastModified||new Date().toISOString(),
+      likes:0,
+      comments:[],
+      isUserUpload:true,
+      isCloud:true
+    };
+
+    state.uploadedPhotos=state.uploadedPhotos.filter(p=>p.id!==photo.id);
+    state.uploadedPhotos.unshift(photo);
+    persistPhotos();
+
+    state.lastUploadedId=photo.id;
+
+    await loadImagesFromS3();
+    renderPhotos();
+
+    closeModal("uploadModal");
+    $("#successPreview").src=photo.src;
+    $("#linkType").value="direct";
+    updateGeneratedLink();
+
+    setTimeout(()=>openModal("uploadSuccessModal"),180);
+    toast("Tải ảnh lên S3 thành công.");
+  }catch(error){
+    console.error(error);
+    errorEl.textContent=error.message||"Tải ảnh thất bại.";
+  }finally{
+    submitButton.disabled=false;
+    submitButton.textContent="Đăng ảnh";
+  }
+});
 $("#linkType").addEventListener("change",updateGeneratedLink);$("#copyLinkButton").addEventListener("click",async()=>{try{await navigator.clipboard.writeText($("#generatedLink").value)}catch{$("#generatedLink").select();document.execCommand("copy")}toast("Đã sao chép.")});$("#viewUploadedButton").addEventListener("click",()=>{closeModal("uploadSuccessModal");setTimeout(()=>openDetail(state.lastUploadedId),180)});
 
 $("#detailLikeButton").addEventListener("click",()=>{const p=getPhoto(state.currentPhotoId);if(!p)return;p.liked=!p.liked;p.likes=Math.max(0,(p.likes||0)+(p.liked?1:-1));$("#detailLikeButton").classList.toggle("is-liked",p.liked);$("#detailLikeCount").textContent=p.likes;updatePhoto(p);if(p.liked&&state.currentUser&&p.owner&&p.owner!==state.currentUser.email)addNotification(p.owner,{type:"like",actor:state.currentUser.name,text:`đã thích ảnh ${p.title}`,photoId:p.id});});
@@ -192,3 +261,47 @@ $("#conversationList").addEventListener("click",e=>{const c=e.target.closest("[d
 // Seed a welcome notification for new local demo accounts
 if(state.currentUser&&getNotifications(state.currentUser.email).length===0){addNotification(state.currentUser.email,{type:"system",actor:"VistaShare",text:"chào mừng bạn. Hãy hoàn thiện hồ sơ và bắt đầu chia sẻ ảnh."})}
 updateAuthUI();
+
+async function loadImagesFromS3(){
+  try{
+    const response=await fetch("/api/images");
+    const result=await response.json();
+
+    if(!response.ok){
+      throw new Error(result.message||"Không lấy được danh sách ảnh từ S3.");
+    }
+
+    const savedByKey=new Map(
+      state.uploadedPhotos
+        .filter(photo=>photo.key)
+        .map(photo=>[photo.key,photo])
+    );
+
+    state.cloudPhotos=(result.images||[]).map((image,index)=>{
+      const saved=savedByKey.get(image.key)||{};
+
+      return {
+        id:image.key||`cloud-${index}`,
+        key:image.key,
+        title:saved.title||image.name||"Ảnh trên S3",
+        category:saved.category||"Đời sống",
+        description:saved.description||"Ảnh được lưu trữ trên Amazon S3.",
+        src:image.url||image.imageUrl||image.src,
+        author:saved.author||"VistaShare",
+        owner:saved.owner||"",
+        createdAt:image.lastModified||new Date().toISOString(),
+        likes:saved.likes||0,
+        comments:saved.comments||[],
+        isUserUpload:true,
+        isCloud:true
+      };
+    });
+
+    renderPhotos();
+  }catch(error){
+    console.error("Lỗi tải thư viện S3:",error);
+    toast(error.message||"Không tải được ảnh từ S3.");
+  }
+}
+
+loadImagesFromS3();
