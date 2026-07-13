@@ -56,6 +56,74 @@ const $$=s=>[...document.querySelectorAll(s)];
 const allPhotos=()=>[...state.cloudPhotos,...state.uploadedPhotos.filter(p=>!p.isCloud),...defaultPhotos];
 const escapeHtml=(v="")=>String(v).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const formatDate=v=>new Intl.DateTimeFormat("vi-VN",{dateStyle:"medium",timeStyle:"short"}).format(new Date(v));
+function saveAuthSession(token, user) {
+  localStorage.setItem("vistaToken", token);
+  localStorage.setItem(
+    "vistaCurrentUser",
+    JSON.stringify(user)
+  );
+
+  state.currentUser = user;
+}
+
+function clearAuthSession() {
+  localStorage.removeItem("vistaToken");
+  localStorage.removeItem("vistaCurrentUser");
+
+  state.currentUser = null;
+}
+
+function getAuthToken() {
+  return localStorage.getItem("vistaToken") || "";
+}
+
+async function restoreAuthSession() {
+  const token = getAuthToken();
+
+  if (!token) {
+    clearAuthSession();
+    updateAuthUI();
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/auth/me", {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.message ||
+        "Phiên đăng nhập không hợp lệ."
+      );
+    }
+
+    saveAuthSession(token, result.user);
+
+    const profile = {
+      ...createDefaultProfile(
+        result.user.email,
+        result.user.name
+      ),
+      ...result.user
+    };
+
+    saveUserProfile(profile);
+    updateAuthUI();
+  } catch (error) {
+    console.warn(
+      "Không thể khôi phục phiên đăng nhập:",
+      error.message
+    );
+
+    clearAuthSession();
+    updateAuthUI();
+  }
+}
 
 function persistPhotos(){localStorage.setItem("vistaUploadedPhotos",JSON.stringify(state.uploadedPhotos));}
 function getPhoto(id){return allPhotos().find(p=>p.id===id);}
@@ -117,13 +185,232 @@ $("#heroDots").addEventListener("click",e=>{const b=e.target.closest("[data-hero
 $("#loginButton").addEventListener("click",()=>{switchAuth("login");openModal("authModal")});
 $("#loginTab").addEventListener("click",()=>switchAuth("login"));$("#registerTab").addEventListener("click",()=>switchAuth("register"));
 $("#avatarButton").addEventListener("click",e=>{e.stopPropagation();$("#profileMenu").hidden=!$("#profileMenu").hidden});
-$("#logoutButton").addEventListener("click",()=>{state.currentUser=null;localStorage.removeItem("vistaCurrentUser");updateAuthUI();toast("Đã đăng xuất. Bạn cần đăng nhập để tải ảnh.")});
+$("#logoutButton").addEventListener(
+  "click",
+  () => {
+    clearAuthSession();
+    updateAuthUI();
+
+    toast(
+      "Đã đăng xuất. Bạn cần đăng nhập để tải ảnh."
+    );
+  }
+);
 $("#uploadButton").addEventListener("click",()=>{if(!state.currentUser){switchAuth("login");openModal("authModal");toast("Vui lòng đăng nhập trước khi tải ảnh.");return;}resetUpload();openModal("uploadModal")});
 
 document.addEventListener("click",e=>{const sw=e.target.closest("[data-switch-auth]");if(sw)switchAuth(sw.dataset.switchAuth);const close=e.target.closest("[data-close-modal]");if(close)closeModal(close.dataset.closeModal);if(!e.target.closest("#profileMenu")&&!e.target.closest("#avatarButton"))$("#profileMenu").hidden=true;});
-$("#registerForm").addEventListener("submit",e=>{e.preventDefault();const name=$("#registerName").value.trim(),email=$("#registerEmail").value.trim().toLowerCase(),pass=$("#registerPassword").value,confirm=$("#registerConfirmPassword").value,users=safeParse("vistaUsers",[]);if(pass!==confirm)return $("#registerError").textContent="Mật khẩu nhập lại không khớp.";if(users.some(u=>u.email===email))return $("#registerError").textContent="Email này đã được đăng ký.";const profile=createDefaultProfile(email,name);users.push({name,email,password:pass,profile});localStorage.setItem("vistaUsers",JSON.stringify(users));saveUserProfile(profile);state.currentUser={name,email,...profile};localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));updateAuthUI();closeModal("authModal");e.target.reset();toast("Đăng ký thành công.");});
-$("#loginForm").addEventListener("submit",e=>{e.preventDefault();const email=$("#loginEmail").value.trim().toLowerCase(),pass=$("#loginPassword").value,users=safeParse("vistaUsers",[]),u=users.find(x=>x.email===email&&x.password===pass);if(!u)return $("#loginError").textContent="Email hoặc mật khẩu không chính xác.";const profile=getUserProfile(u.email,u.name);state.currentUser={name:u.name,email:u.email,...profile};localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));updateAuthUI();closeModal("authModal");e.target.reset();toast(`Xin chào ${u.name}.`);});
+$("#registerForm").addEventListener(
+  "submit",
+  async event => {
+    event.preventDefault();
 
+    const name =
+      $("#registerName").value.trim();
+
+    const email =
+      $("#registerEmail")
+        .value
+        .trim()
+        .toLowerCase();
+
+    const password =
+      $("#registerPassword").value;
+
+    const confirmPassword =
+      $("#registerConfirmPassword").value;
+
+    const errorElement =
+      $("#registerError");
+
+    const submitButton =
+      event.currentTarget.querySelector(
+        'button[type="submit"]'
+      );
+
+    errorElement.textContent = "";
+
+    if (!name || !email || !password) {
+      errorElement.textContent =
+        "Vui lòng nhập đầy đủ thông tin.";
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      errorElement.textContent =
+        "Mật khẩu nhập lại không khớp.";
+      return;
+    }
+
+    if (password.length < 6) {
+      errorElement.textContent =
+        "Mật khẩu phải có ít nhất 6 ký tự.";
+      return;
+    }
+
+    submitButton.disabled = true;
+    submitButton.textContent =
+      "Đang đăng ký...";
+
+    try {
+      const response = await fetch(
+        "/api/auth/register",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json"
+          },
+
+          body: JSON.stringify({
+            name,
+            email,
+            password
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+          "Đăng ký thất bại."
+        );
+      }
+
+      saveAuthSession(
+        result.token,
+        result.user
+      );
+
+      const profile = {
+        ...createDefaultProfile(
+          result.user.email,
+          result.user.name
+        ),
+        ...result.user
+      };
+
+      saveUserProfile(profile);
+
+      updateAuthUI();
+      closeModal("authModal");
+
+      event.currentTarget.reset();
+
+      toast("Đăng ký thành công.");
+    } catch (error) {
+      console.error(error);
+
+      errorElement.textContent =
+        error.message ||
+        "Không thể đăng ký tài khoản.";
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent =
+        "Tạo tài khoản";
+    }
+  }
+);
+$("#loginForm").addEventListener(
+  "submit",
+  async event => {
+    event.preventDefault();
+
+    const email =
+      $("#loginEmail")
+        .value
+        .trim()
+        .toLowerCase();
+
+    const password =
+      $("#loginPassword").value;
+
+    const errorElement =
+      $("#loginError");
+
+    const submitButton =
+      event.currentTarget.querySelector(
+        'button[type="submit"]'
+      );
+
+    errorElement.textContent = "";
+
+    if (!email || !password) {
+      errorElement.textContent =
+        "Vui lòng nhập email và mật khẩu.";
+      return;
+    }
+
+    submitButton.disabled = true;
+    submitButton.textContent =
+      "Đang đăng nhập...";
+
+    try {
+      const response = await fetch(
+        "/api/auth/login",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json"
+          },
+
+          body: JSON.stringify({
+            email,
+            password
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+          "Email hoặc mật khẩu không chính xác."
+        );
+      }
+
+      saveAuthSession(
+        result.token,
+        result.user
+      );
+
+      const profile = {
+        ...createDefaultProfile(
+          result.user.email,
+          result.user.name
+        ),
+        ...result.user
+      };
+
+      saveUserProfile(profile);
+
+      updateAuthUI();
+      closeModal("authModal");
+
+      event.currentTarget.reset();
+
+      toast(
+        `Xin chào ${
+          result.user.displayName ||
+          result.user.name
+        }.`
+      );
+    } catch (error) {
+      console.error(error);
+
+      errorElement.textContent =
+        error.message ||
+        "Đăng nhập thất bại.";
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent =
+        "Đăng nhập";
+    }
+  }
+);
 $("#photoInput").addEventListener("change",e=>processFile(e.target.files[0]));["dragenter","dragover"].forEach(n=>$("#dropZone").addEventListener(n,e=>{e.preventDefault();$("#dropZone").classList.add("is-dragging")}));["dragleave","drop"].forEach(n=>$("#dropZone").addEventListener(n,e=>{e.preventDefault();$("#dropZone").classList.remove("is-dragging")}));$("#dropZone").addEventListener("drop",e=>processFile(e.dataTransfer.files[0]));
 $("#uploadForm").addEventListener("submit",async e=>{
   e.preventDefault();
@@ -268,7 +555,9 @@ $("#commentForm").addEventListener("submit",e=>{e.preventDefault();if(!state.cur
 $("#relatedGallery").addEventListener("click",e=>{const card=e.target.closest("[data-photo-id]");if(!card)return;closeModal("detailModal");setTimeout(()=>openDetail(card.dataset.photoId),180)});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")$$('.modal.is-open').forEach(m=>closeModal(m.id));});
 
-renderHero();renderCategories();updateAuthUI();renderPhotos();
+renderHero();
+renderCategories();
+renderPhotos();
 
 
 /* Social profile, notifications and Messenger-style chat */
@@ -310,8 +599,7 @@ $("#editProfileForm").addEventListener("submit",e=>{
   const p={...state.editingProfile,displayName,name:displayName,username,bio:$("#editBio").value.trim(),country:$("#editCountry").value.trim(),city:$("#editCity").value.trim(),facebook:normalizeProfileUrl($("#editFacebook").value),instagram:normalizeProfileUrl($("#editInstagram").value),website:normalizeProfileUrl($("#editWebsite").value)};
   try{
     saveUserProfile(p);
-    const users=safeParse("vistaUsers",[]).map(u=>u.email===p.email?{...u,name:displayName,profile:p}:u);
-    localStorage.setItem("vistaUsers",JSON.stringify(users));
+    
     state.uploadedPhotos=state.uploadedPhotos.map(photo=>photo.owner===p.email?{...photo,author:displayName}:photo);
     persistPhotos();
     state.currentUser={...state.currentUser,...p};
@@ -324,7 +612,7 @@ $("#conversationList").addEventListener("click",e=>{const c=e.target.closest("[d
 
 // Seed a welcome notification for new local demo accounts
 if(state.currentUser&&getNotifications(state.currentUser.email).length===0){addNotification(state.currentUser.email,{type:"system",actor:"VistaShare",text:"chào mừng bạn. Hãy hoàn thiện hồ sơ và bắt đầu chia sẻ ảnh."})}
-updateAuthUI();
+
 
 async function loadImagesFromS3(){
   try{
@@ -408,3 +696,4 @@ async function loadImagesFromS3(){
 }
 
 loadImagesFromS3();
+restoreAuthSession();

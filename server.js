@@ -4,6 +4,9 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const {
   S3Client,
@@ -28,13 +31,131 @@ const requiredEnvironmentVariables = [
     "AWS_REGION",
     "AWS_S3_BUCKET",
     "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY"
+    "AWS_SECRET_ACCESS_KEY",
+    "MONGODB_URI",
+    "JWT_SECRET"
 ];
 
 for (const variableName of requiredEnvironmentVariables) {
     if (!process.env[variableName]) {
         console.error(`Thiếu biến môi trường: ${variableName}`);
         process.exit(1);
+    }
+}
+/*
+ * Model tài khoản người dùng MongoDB.
+ */
+const userSchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            required: true,
+            trim: true,
+            maxlength: 60
+        },
+
+        email: {
+            type: String,
+            required: true,
+            unique: true,
+            lowercase: true,
+            trim: true
+        },
+
+        passwordHash: {
+            type: String,
+            required: true
+        },
+
+        displayName: {
+            type: String,
+            trim: true,
+            maxlength: 60
+        },
+
+        username: {
+            type: String,
+            trim: true,
+            maxlength: 30
+        },
+
+        bio: {
+            type: String,
+            default: "",
+            maxlength: 220
+        },
+
+        avatar: {
+            type: String,
+            default: ""
+        },
+
+        cover: {
+            type: String,
+            default: ""
+        }
+    },
+    {
+        timestamps: true
+    }
+);
+
+const User = mongoose.model("User", userSchema);
+    function createAccessToken(user) {
+    return jwt.sign(
+        {
+            userId: user._id.toString(),
+            email: user.email
+        },
+        process.env.JWT_SECRET,
+        {
+            expiresIn: "7d"
+        }
+    );
+}
+
+async function requireAuth(
+    request,
+    response,
+    next
+) {
+    try {
+        const authorization =
+            request.headers.authorization || "";
+
+        if (!authorization.startsWith("Bearer ")) {
+            return response.status(401).json({
+                success: false,
+                message: "Bạn chưa đăng nhập."
+            });
+        }
+
+        const token = authorization.slice(7);
+
+        const payload = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        const user = await User.findById(
+            payload.userId
+        ).select("-passwordHash");
+
+        if (!user) {
+            return response.status(401).json({
+                success: false,
+                message: "Tài khoản không tồn tại."
+            });
+        }
+
+        request.user = user;
+        next();
+    } catch (error) {
+        return response.status(401).json({
+            success: false,
+            message:
+                "Phiên đăng nhập không hợp lệ hoặc đã hết hạn."
+        });
     }
 }
 
@@ -102,7 +223,216 @@ app.get("/api/health", (request, response) => {
         region: process.env.AWS_REGION
     });
 });
+/*
+ * API đăng ký tài khoản.
+ */
+app.post(
+    "/api/auth/register",
+    async (request, response, next) => {
+        try {
+            const name =
+                String(request.body.name || "").trim();
 
+            const email =
+                String(request.body.email || "")
+                    .trim()
+                    .toLowerCase();
+
+            const password =
+                String(request.body.password || "");
+
+            if (!name || !email || !password) {
+                return response.status(400).json({
+                    success: false,
+                    message:
+                        "Vui lòng nhập đầy đủ họ tên, email và mật khẩu."
+                });
+            }
+
+            if (name.length > 60) {
+                return response.status(400).json({
+                    success: false,
+                    message:
+                        "Họ tên không được vượt quá 60 ký tự."
+                });
+            }
+
+            if (password.length < 6) {
+                return response.status(400).json({
+                    success: false,
+                    message:
+                        "Mật khẩu phải có ít nhất 6 ký tự."
+                });
+            }
+
+            const existingUser =
+                await User.findOne({ email });
+
+            if (existingUser) {
+                return response.status(409).json({
+                    success: false,
+                    message:
+                        "Email này đã được đăng ký."
+                });
+            }
+
+            const passwordHash =
+                await bcrypt.hash(password, 12);
+
+            const defaultUsername =
+                email
+                    .split("@")[0]
+                    .replace(
+                        /[^a-zA-Z0-9_]/g,
+                        "_"
+                    );
+
+            const user = await User.create({
+                name,
+                email,
+                passwordHash,
+                displayName: name,
+                username: defaultUsername
+            });
+
+            const token =
+                createAccessToken(user);
+
+            return response.status(201).json({
+                success: true,
+                message: "Đăng ký thành công.",
+                token,
+
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    displayName:
+                        user.displayName || user.name,
+                    username: user.username,
+                    email: user.email,
+                    bio: user.bio,
+                    avatar: user.avatar,
+                    cover: user.cover
+                }
+            });
+        } catch (error) {
+            if (error?.code === 11000) {
+                return response.status(409).json({
+                    success: false,
+                    message:
+                        "Email này đã được đăng ký."
+                });
+            }
+
+            next(error);
+        }
+    }
+);
+
+/*
+ * API đăng nhập.
+ */
+app.post(
+    "/api/auth/login",
+    async (request, response, next) => {
+        try {
+            const email =
+                String(request.body.email || "")
+                    .trim()
+                    .toLowerCase();
+
+            const password =
+                String(request.body.password || "");
+
+            if (!email || !password) {
+                return response.status(400).json({
+                    success: false,
+                    message:
+                        "Vui lòng nhập email và mật khẩu."
+                });
+            }
+
+            const user =
+                await User.findOne({ email });
+
+            if (!user) {
+                return response.status(401).json({
+                    success: false,
+                    message:
+                        "Email hoặc mật khẩu không chính xác."
+                });
+            }
+
+            const passwordMatches =
+                await bcrypt.compare(
+                    password,
+                    user.passwordHash
+                );
+
+            if (!passwordMatches) {
+                return response.status(401).json({
+                    success: false,
+                    message:
+                        "Email hoặc mật khẩu không chính xác."
+                });
+            }
+
+            const token =
+                createAccessToken(user);
+
+            return response.json({
+                success: true,
+                message: "Đăng nhập thành công.",
+                token,
+
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    displayName:
+                        user.displayName || user.name,
+                    username: user.username,
+                    email: user.email,
+                    bio: user.bio,
+                    avatar: user.avatar,
+                    cover: user.cover
+                }
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+/*
+ * API kiểm tra phiên đăng nhập.
+ */
+app.get(
+    "/api/auth/me",
+    requireAuth,
+    async (request, response) => {
+        response.json({
+            success: true,
+
+            user: {
+                id: request.user._id,
+                name: request.user.name,
+                displayName:
+                    request.user.displayName ||
+                    request.user.name,
+                username:
+                    request.user.username,
+                email:
+                    request.user.email,
+                bio:
+                    request.user.bio,
+                avatar:
+                    request.user.avatar,
+                cover:
+                    request.user.cover
+            }
+        });
+    }
+);
 /*
  * 6. API lấy danh sách ảnh từ S3
  */
@@ -456,16 +786,56 @@ app.use((error, request, response, next) => {
 });
 
 /*
- * 11. Khởi động server
+ * 11. Kết nối MongoDB rồi mới chạy server.
  */
-app.listen(port, "0.0.0.0", () => {
-    console.log("-----------------------------------------");
-    console.log("VistaShare server đã khởi động");
-    console.log(`Địa chỉ: http://localhost:${port}`);
-    console.log(`Bucket: ${process.env.AWS_S3_BUCKET}`);
-    console.log(`Region: ${process.env.AWS_REGION}`);
-    console.log("-----------------------------------------");
-});
+async function startServer() {
+    try {
+        await mongoose.connect(
+            process.env.MONGODB_URI
+        );
+
+        console.log(
+            "Đã kết nối MongoDB Atlas."
+        );
+
+        app.listen(
+            port,
+            "0.0.0.0",
+            () => {
+                console.log(
+                    "-----------------------------------------"
+                );
+                console.log(
+                    "VistaShare server đã khởi động"
+                );
+                console.log(
+                    `Địa chỉ: http://localhost:${port}`
+                );
+                console.log(
+                    `Bucket: ${process.env.AWS_S3_BUCKET}`
+                );
+                console.log(
+                    `Region: ${process.env.AWS_REGION}`
+                );
+                console.log(
+                    "MongoDB: đã kết nối"
+                );
+                console.log(
+                    "-----------------------------------------"
+                );
+            }
+        );
+    } catch (error) {
+        console.error(
+            "Không thể kết nối MongoDB Atlas:",
+            error.message
+        );
+
+        process.exit(1);
+    }
+}
+
+startServer();
 
 function getFileExtension(originalName, mimeType) {
     const originalExtension =
