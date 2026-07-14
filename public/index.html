@@ -249,9 +249,18 @@
       <button class="avatar" id="avatarButton" type="button" hidden>A</button>
     </div>
     <div class="profile-menu profile-menu--rich" id="profileMenu" hidden>
-      <div class="profile-menu__head"><div class="mini-avatar" id="menuAvatar">V</div><div><strong id="profileName">Người dùng</strong><span id="profileEmail"></span></div></div>
+      <div class="profile-menu__head">
+        <div class="mini-avatar" id="menuAvatar">V</div>
+        <div class="profile-identity">
+          <strong id="profileName">Người dùng</strong>
+          <span id="profileEmail"></span>
+          <span class="account-role" id="accountRole">Thành viên</span>
+        </div>
+      </div>
       <button id="viewMyProfileButton" type="button">👤 Hồ sơ của tôi</button>
       <button id="editProfileButton" type="button">⚙ Chỉnh sửa hồ sơ</button>
+      <button id="manageCategoriesButton" type="button">🗂 Quản lý danh mục</button>
+      <button id="adminDashboardButton" type="button" hidden>🛡 Trang quản trị</button>
       <button id="menuNotificationsButton" type="button">🔔 Thông báo</button>
       <button id="menuMessagesButton" type="button">💬 Tin nhắn</button>
       <hr>
@@ -475,6 +484,48 @@
 
   <input id="quickAvatarInput" type="file" accept="image/*" hidden>
   <input id="quickCoverInput" type="file" accept="image/*" hidden>
+
+
+  <div class="modal" id="categoryManagerModal" hidden>
+    <div class="modal__backdrop" data-close-modal="categoryManagerModal"></div>
+    <section class="modal__panel modal__panel--wide" role="dialog" aria-modal="true">
+      <button class="modal__close" type="button" data-close-modal="categoryManagerModal">×</button>
+      <div class="modal__heading">
+        <p class="eyebrow">Danh mục cộng đồng</p>
+        <h2>Quản lý danh mục</h2>
+        <p>Thành viên được thêm danh mục và chỉ xóa danh mục do chính mình tạo.</p>
+      </div>
+      <form id="categoryCreateForm" class="category-create-form">
+        <input id="newCategoryName" type="text" minlength="2" maxlength="40" placeholder="Ví dụ: Ảnh đường phố" required>
+        <button class="button-primary" type="submit">Thêm danh mục</button>
+      </form>
+      <p class="form-error" id="categoryError"></p>
+      <div class="category-admin-list" id="categoryAdminList"></div>
+    </section>
+  </div>
+
+  <div class="modal" id="adminDashboardModal" hidden>
+    <div class="modal__backdrop" data-close-modal="adminDashboardModal"></div>
+    <section class="modal__panel admin-dashboard-panel" role="dialog" aria-modal="true">
+      <button class="modal__close" type="button" data-close-modal="adminDashboardModal">×</button>
+      <div class="modal__heading">
+        <p class="eyebrow">Quản trị hệ thống</p>
+        <h2>Bảng điều khiển quản trị</h2>
+        <p>Quản lý tài khoản, danh mục và bài đăng của người dùng.</p>
+      </div>
+      <div class="admin-stats">
+        <article><strong id="adminUserCount">0</strong><span>Tài khoản</span></article>
+        <article><strong id="adminImageCount">0</strong><span>Bài đăng</span></article>
+        <article><strong id="adminCategoryCount">0</strong><span>Danh mục</span></article>
+      </div>
+      <div class="admin-tabs-simple">
+        <button class="is-active" type="button" data-admin-tab="images">Bài đăng</button>
+        <button type="button" data-admin-tab="users">Tài khoản</button>
+      </div>
+      <div id="adminImagesPanel" class="admin-panel-list"></div>
+      <div id="adminUsersPanel" class="admin-panel-list" hidden></div>
+    </section>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
   <script src="script.js"></script>

@@ -50,7 +50,7 @@ const rawPhotos = [
 const defaultPhotos = rawPhotos.map((p,i)=>({id:`default-${i}`,title:p[0],category:p[1],src:p[2],author:p[3],description:p[4],createdAt:new Date(Date.now()-i*86400000).toISOString(),likes:12+i*7,comments:[]}));
 
 const safeParse=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}};
-const state={uploadedPhotos:safeParse("vistaUploadedPhotos",[]),cloudPhotos:[],currentUser:safeParse("vistaCurrentUser",null),selectedDataUrl:"",selectedFile:null,activeCategory:"Tất cả",currentPhotoId:null,lastUploadedId:null};
+const state={uploadedPhotos:safeParse("vistaUploadedPhotos",[]),cloudPhotos:[],currentUser:safeParse("vistaCurrentUser",null),selectedDataUrl:"",selectedFile:null,activeCategory:"Tất cả",currentPhotoId:null,lastUploadedId:null,categories:[],adminUsers:[],adminImages:[],notifications:[],conversations:[],activeMessages:[],activeChatId:null,socialPollingTimer:null};
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
 const allPhotos=()=>[...state.cloudPhotos,...state.uploadedPhotos.filter(p=>!p.isCloud),...defaultPhotos];
@@ -156,23 +156,105 @@ function runHeroSearch(value){
 }
 
 function renderCategories(){
-  $("#categoryMenu").innerHTML=CATEGORIES.map(c=>`<button type="button" class="category-chip ${c===state.activeCategory?"is-active":""}" data-category="${c}">${c}</button>`).join("");
-  $("#photoCategory").innerHTML=`<option value="">Chọn danh mục</option>`+CATEGORIES.slice(1).map(c=>`<option>${c}</option>`).join("");
+  const categoryNames=["Tất cả",...state.categories.map(category=>category.name)];
+  $("#categoryMenu").innerHTML=categoryNames.map(category=>`<button type="button" class="category-chip ${category===state.activeCategory?"is-active":""}" data-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`).join("");
+  $("#photoCategory").innerHTML=`<option value="">Chọn danh mục</option>`+state.categories.map(category=>`<option value="${escapeHtml(category.name)}">${escapeHtml(category.name)}</option>`).join("");
 }
 function filteredPhotos(){const q=$("#heroSearchInput").value.trim().toLowerCase();return allPhotos().filter(p=>(state.activeCategory==="Tất cả"||p.category===state.activeCategory)&&`${p.title} ${p.category} ${p.author} ${p.description||""}`.toLowerCase().includes(q));}
 function card(p){return `<article class="photo-card" data-photo-id="${p.id}" tabindex="0"><img src="${p.src}" alt="${escapeHtml(p.title)}" loading="lazy"><div class="card-shade"></div><button class="quick-like" type="button" data-action="like" aria-label="Thích ảnh">♡</button><div class="photo-meta"><strong>${escapeHtml(p.title)}</strong><span>${escapeHtml(p.author)} · ${escapeHtml(p.category)}</span></div></article>`;}
 function renderPhotos(){const items=filteredPhotos();$("#gallery").innerHTML=items.map(card).join("");$("#resultCount").textContent=`${items.length} ảnh`;$("#heroPhotoCount").textContent=allPhotos().length;$("#emptyState").hidden=items.length>0;$("#galleryTitle").textContent=state.activeCategory==="Tất cả"?"Tất cả ảnh":`Ảnh ${state.activeCategory.toLowerCase()}`;}
 
 function switchAuth(mode){const login=mode==="login";$("#loginForm").hidden=!login;$("#registerForm").hidden=login;$("#loginTab").classList.toggle("is-active",login);$("#registerTab").classList.toggle("is-active",!login);$("#loginError").textContent="";$("#registerError").textContent="";}
-function updateAuthUI(){const u=state.currentUser;$("#loginButton").hidden=!!u;$("#avatarButton").hidden=!u;$("#notificationButton").hidden=!u;$("#messageButton").hidden=!u;$("#profileMenu").hidden=true;$("#notificationPanel").hidden=true;if(u){const p=getUserProfile(u.email,u.name);state.currentUser={...u,...p};localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));applyAvatar($("#avatarButton"),p);applyAvatar($("#menuAvatar"),p);$("#profileName").textContent=p.displayName||p.name;$("#profileEmail").textContent=p.email;renderNotificationBadge();renderMessageBadge();}}
+function updateAuthUI(){
+  const u=state.currentUser;
+  $("#loginButton").hidden=!!u;
+  $("#avatarButton").hidden=!u;
+  $("#notificationButton").hidden=!u;
+  $("#messageButton").hidden=!u;
+  $("#profileMenu").hidden=true;
+  $("#notificationPanel").hidden=true;
+  if(!u){
+    clearInterval(state.socialPollingTimer);
+    state.notifications=[];
+    state.conversations=[];
+    state.activeMessages=[];
+    return;
+  }
+
+  // Dữ liệu MongoDB/S3 phải ưu tiên hơn localStorage để avatar và ảnh bìa
+  // vẫn đúng sau khi tải lại trang hoặc đăng nhập trên máy khác.
+  const localProfile=getUserProfile(u.email,u.name);
+  const p={...localProfile,...u,role:u.role||"user",id:u.id||u._id};
+  state.currentUser=p;
+  saveUserProfile(p);
+  localStorage.setItem("vistaCurrentUser",JSON.stringify(p));
+  applyAvatar($("#avatarButton"),p);
+  applyAvatar($("#menuAvatar"),p);
+  $("#profileName").textContent=p.displayName||p.name;
+  $("#profileEmail").textContent=p.email;
+
+  const isAdmin=p.role==="admin";
+  $("#accountRole").textContent=isAdmin?"Quản trị viên":"Thành viên";
+  $("#accountRole").classList.toggle("is-admin",isAdmin);
+  $("#adminDashboardButton").hidden=!isAdmin;
+
+  renderNotificationBadge();
+  renderMessageBadge();
+  startSocialPolling();
+}
 
 function resetUpload(){state.selectedDataUrl="";state.selectedFile=null;$("#uploadForm").reset();$("#imagePreview").hidden=true;$("#imagePreview").removeAttribute("src");$("#uploadPlaceholder").hidden=false;$("#dropZone").classList.remove("has-image");$("#uploadError").textContent="";}
 function processFile(file){const err=$("#uploadError");err.textContent="";if(!file)return;if(!["image/jpeg","image/png","image/webp","image/gif"].includes(file.type))return err.textContent="Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF.";if(file.size>8*1024*1024)return err.textContent="Ảnh vượt quá 8 MB.";state.selectedFile=file;const r=new FileReader();r.onload=()=>{state.selectedDataUrl=r.result;$("#imagePreview").src=r.result;$("#imagePreview").hidden=false;$("#uploadPlaceholder").hidden=true;$("#dropZone").classList.add("has-image");if(!$("#photoTitle").value)$("#photoTitle").value=file.name.replace(/\.[^.]+$/,"")};r.readAsDataURL(file);}
 
 function updateGeneratedLink(){const p=getPhoto(state.lastUploadedId);if(!p)return;const type=$("#linkType").value;const direct=p.src;const map={direct,html:`<a href="${direct}" target="_blank"><img src="${direct}" alt="${escapeHtml(p.title)}"></a>`,thumbnail:`<a href="${direct}" target="_blank"><img src="${direct}" alt="${escapeHtml(p.title)}" width="240"></a>`,bbcode:`[url=${direct}][img]${direct}[/img][/url]`};$("#generatedLink").value=map[type];}
 
-function renderComments(photo){const comments=photo.comments||[];$("#commentCount").textContent=comments.length;$("#commentList").innerHTML=comments.length?comments.map(c=>`<div class="comment-item"><div class="comment-avatar">${escapeHtml(c.author.charAt(0).toUpperCase())}</div><div><strong>${escapeHtml(c.author)}</strong><span>${formatDate(c.createdAt)}</span><p>${escapeHtml(c.text)}</p></div></div>`).join(""):`<p class="no-comments">Chưa có bình luận. Hãy là người đầu tiên.</p>`;}
-function openDetail(id){const p=getPhoto(id);if(!p)return;state.currentPhotoId=id;$("#detailImage").src=p.src;$("#detailTitle").textContent=p.title;$("#detailDescription").textContent=p.description||"Không có mô tả.";$("#detailAuthor").textContent=p.author||"Người dùng VistaShare";$("#detailAuthorInitial").textContent=(p.author||"V").charAt(0).toUpperCase();$("#detailDate").textContent=`Đăng ${formatDate(p.createdAt)}`;$("#detailLikeCount").textContent=p.likes||0;$("#detailLikeButton").classList.toggle("is-liked",!!p.liked);renderComments(p);const rel=allPhotos().filter(x=>x.id!==p.id&&x.category===p.category).slice(0,6);$("#relatedGallery").innerHTML=rel.map(x=>`<article class="related-card" data-photo-id="${x.id}"><img src="${x.src}" alt="${escapeHtml(x.title)}"><strong>${escapeHtml(x.title)}</strong></article>`).join("")||"<p>Chưa có ảnh liên quan.</p>";openModal("detailModal");}
+function renderComments(photo){
+  const comments=photo.comments||[];
+  $("#commentCount").textContent=comments.length;
+  $("#commentList").innerHTML=comments.length?comments.map(c=>{
+    const initial=(c.author||"N").charAt(0).toUpperCase();
+    return `<div class="comment-item">
+      <div class="comment-avatar" style="${c.avatar?`background-image:url('${c.avatar}');background-size:cover;background-position:center;`:""}">${c.avatar?"":escapeHtml(initial)}</div>
+      <div><strong>${escapeHtml(c.author||"Người dùng")}</strong><span>${formatDate(c.createdAt)}</span><p>${escapeHtml(c.text)}</p></div>
+    </div>`;
+  }).join(""):`<p class="no-comments">Chưa có bình luận. Hãy là người đầu tiên.</p>`;
+}
+async function openDetail(id){
+  const p=getPhoto(id);
+  if(!p)return;
+  state.currentPhotoId=id;
+  $("#detailImage").src=p.src;
+  $("#detailTitle").textContent=p.title;
+  $("#detailDescription").textContent=p.description||"Không có mô tả.";
+  $("#detailAuthor").textContent=p.author||"Người dùng VistaShare";
+  applyAvatar($("#detailAuthorInitial"),resolveAuthorProfile(p.author||"VistaShare",p.owner));
+  $("#detailDate").textContent=`Đăng ${formatDate(p.createdAt)}`;
+  $("#detailLikeCount").textContent=p.likes||0;
+  $("#detailLikeButton").classList.toggle("is-liked",!!p.liked);
+  renderComments(p);
+  const rel=allPhotos().filter(x=>x.id!==p.id&&x.category===p.category).slice(0,6);
+  $("#relatedGallery").innerHTML=rel.map(x=>`<article class="related-card" data-photo-id="${x.id}"><img src="${x.src}" alt="${escapeHtml(x.title)}"><strong>${escapeHtml(x.title)}</strong></article>`).join("")||"<p>Chưa có ảnh liên quan.</p>";
+  openModal("detailModal");
+
+  if(isRealPhoto(p)){
+    try{
+      const social=await apiRequest(`/api/photos/social?photoId=${encodeURIComponent(p.id)}`);
+      if(state.currentPhotoId===id){
+        p.likes=social.likes||0;
+        p.liked=Boolean(social.liked);
+        p.comments=social.comments||[];
+        $("#detailLikeCount").textContent=p.likes;
+        $("#detailLikeButton").classList.toggle("is-liked",p.liked);
+        renderComments(p);
+      }
+    }catch(error){console.warn("Không tải được tương tác ảnh:",error.message);}
+  }
+
+  const authorProfile=await fetchAuthorProfile(p.author||"VistaShare",p.owner);
+  if(state.currentPhotoId===id){
+    applyAvatar($("#detailAuthorInitial"),authorProfile);
+  }
+}
 function updatePhoto(photo){const i=state.uploadedPhotos.findIndex(p=>p.id===photo.id);if(i>=0){state.uploadedPhotos[i]=photo;persistPhotos();}}
 
 $("#categoryMenu").addEventListener("click",e=>{const b=e.target.closest("[data-category]");if(!b)return;state.activeCategory=b.dataset.category;renderCategories();renderPhotos();});
@@ -463,6 +545,9 @@ formData.append(
 
 const response = await fetch("/api/images", {
   method: "POST",
+  headers: {
+    Authorization: `Bearer ${getAuthToken()}`
+  },
   body: formData
 });
 
@@ -548,10 +633,75 @@ const response = await fetch("/api/images", {
 });
 $("#linkType").addEventListener("change",updateGeneratedLink);$("#copyLinkButton").addEventListener("click",async()=>{try{await navigator.clipboard.writeText($("#generatedLink").value)}catch{$("#generatedLink").select();document.execCommand("copy")}toast("Đã sao chép.")});$("#viewUploadedButton").addEventListener("click",()=>{closeModal("uploadSuccessModal");setTimeout(()=>openDetail(state.lastUploadedId),180)});
 
-$("#detailLikeButton").addEventListener("click",()=>{const p=getPhoto(state.currentPhotoId);if(!p)return;p.liked=!p.liked;p.likes=Math.max(0,(p.likes||0)+(p.liked?1:-1));$("#detailLikeButton").classList.toggle("is-liked",p.liked);$("#detailLikeCount").textContent=p.likes;updatePhoto(p);if(p.liked&&state.currentUser&&p.owner&&p.owner!==state.currentUser.email)addNotification(p.owner,{type:"like",actor:state.currentUser.name,text:`đã thích ảnh ${p.title}`,photoId:p.id});});
+$("#detailLikeButton").addEventListener("click",async()=>{
+  const p=getPhoto(state.currentPhotoId);
+  if(!p)return;
+
+  if(!isRealPhoto(p)){
+    p.liked=!p.liked;
+    p.likes=Math.max(0,(p.likes||0)+(p.liked?1:-1));
+    $("#detailLikeButton").classList.toggle("is-liked",p.liked);
+    $("#detailLikeCount").textContent=p.likes;
+    return;
+  }
+
+  if(!state.currentUser){
+    closeModal("detailModal");
+    switchAuth("login");
+    setTimeout(()=>openModal("authModal"),180);
+    toast("Đăng nhập để thích ảnh.");
+    return;
+  }
+
+  try{
+    const result=await apiRequest("/api/photos/like",{
+      method:p.liked?"DELETE":"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({photoId:p.id})
+    });
+    p.liked=result.liked;
+    p.likes=result.likes;
+    $("#detailLikeButton").classList.toggle("is-liked",p.liked);
+    $("#detailLikeCount").textContent=p.likes;
+  }catch(error){toast(error.message||"Không thể cập nhật lượt thích.");}
+});
 $("#detailShareButton").addEventListener("click",async()=>{const p=getPhoto(state.currentPhotoId);const data={title:p.title,text:`Xem ảnh ${p.title} trên VistaShare`,url:p.src};try{if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(p.src);toast("Đã sao chép liên kết ảnh.")}}catch{}});
 $("#detailDownloadButton").addEventListener("click",async()=>{const p=getPhoto(state.currentPhotoId);try{const res=await fetch(p.src);const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`${p.title.replace(/[^\p{L}\p{N}]+/gu,"-")}.jpg`;a.click();URL.revokeObjectURL(url)}catch{window.open(p.src,"_blank")} });
-$("#commentForm").addEventListener("submit",e=>{e.preventDefault();if(!state.currentUser){closeModal("detailModal");switchAuth("login");setTimeout(()=>openModal("authModal"),180);toast("Đăng nhập để bình luận.");return;}const input=$("#commentInput"),text=input.value.trim();if(!text)return;const p=getPhoto(state.currentPhotoId);p.comments=p.comments||[];p.comments.unshift({author:state.currentUser.name,text,createdAt:new Date().toISOString()});input.value="";renderComments(p);updatePhoto(p);if(p.owner&&p.owner!==state.currentUser.email)addNotification(p.owner,{type:"comment",actor:state.currentUser.name,text:`đã bình luận ảnh ${p.title}`,photoId:p.id});});
+$("#commentForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  if(!state.currentUser){
+    closeModal("detailModal");
+    switchAuth("login");
+    setTimeout(()=>openModal("authModal"),180);
+    toast("Đăng nhập để bình luận.");
+    return;
+  }
+
+  const input=$("#commentInput");
+  const text=input.value.trim();
+  if(!text)return;
+  const p=getPhoto(state.currentPhotoId);
+
+  if(!isRealPhoto(p)){
+    p.comments=p.comments||[];
+    p.comments.unshift({author:state.currentUser.name,text,createdAt:new Date().toISOString(),avatar:state.currentUser.avatar||""});
+    input.value="";
+    renderComments(p);
+    return;
+  }
+
+  try{
+    const result=await apiRequest("/api/photos/comments",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({photoId:p.id,text})
+    });
+    p.comments=p.comments||[];
+    p.comments.unshift(result.comment);
+    input.value="";
+    renderComments(p);
+  }catch(error){toast(error.message||"Không thể gửi bình luận.");}
+});
 $("#relatedGallery").addEventListener("click",e=>{const card=e.target.closest("[data-photo-id]");if(!card)return;closeModal("detailModal");setTimeout(()=>openDetail(card.dataset.photoId),180)});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")$$('.modal.is-open').forEach(m=>closeModal(m.id));});
 
@@ -565,54 +715,496 @@ function profileKey(email){return `vistaProfile:${email}`}
 function createDefaultProfile(email,name){return {email,name,displayName:name,username:(email.split("@")[0]||"user").replace(/[^a-zA-Z0-9_]/g,"_"),bio:"Chia sẻ những khoảnh khắc truyền cảm hứng trên VistaShare.",country:"",city:"",facebook:"",instagram:"",website:"",avatar:"",cover:"",followers:0,following:0}}
 function getUserProfile(email,name="Người dùng"){return {...createDefaultProfile(email,name),...safeParse(profileKey(email),{})}}
 function saveUserProfile(profile){localStorage.setItem(profileKey(profile.email),JSON.stringify(profile))}
-function applyAvatar(el,p){if(!el)return;const name=p.displayName||p.name||"V";el.textContent=p.avatar?"":name.charAt(0).toUpperCase();el.style.backgroundImage=p.avatar?`url(${p.avatar})`:""}
+function applyAvatar(el,p){
+  if(!el)return;
+  const name=p?.displayName||p?.name||"V";
+  const avatar=p?.avatar||"";
+  el.textContent=avatar?"":name.charAt(0).toUpperCase();
+  el.style.backgroundImage=avatar?`url("${avatar.replace(/"/g,"%22")}")`:"";
+  el.style.backgroundSize=avatar?"cover":"";
+  el.style.backgroundPosition=avatar?"center":"";
+  el.style.backgroundRepeat=avatar?"no-repeat":"";
+}
 function applyCover(el,p){if(!el)return;el.style.backgroundImage=p.cover?`url(${p.cover})`:"linear-gradient(120deg,#8c8e75,#3c9dbc)"}
 function fileToDataUrl(file,cb){if(!file)return;const r=new FileReader();r.onload=()=>cb(r.result);r.readAsDataURL(file)}
-function resolveAuthorProfile(author,owner){if(owner)return getUserProfile(owner,author);return {...createDefaultProfile(`author:${author}`,author),bio:`Nhiếp ảnh gia cộng đồng VistaShare.`,username:author.toLowerCase().replace(/\s+/g,"_")}}
-function openProfile(profile){state.viewedProfile=profile;const own=!!state.currentUser&&profile.email===state.currentUser.email;applyCover($("#profileCover"),profile);applyAvatar($("#profileAvatarLarge"),profile);$("#publicProfileName").textContent=profile.displayName||profile.name;$("#publicProfileBio").textContent=profile.bio||"Chưa có tiểu sử.";const photos=allPhotos().filter(p=>p.owner===profile.email||(!p.owner&&p.author===profile.name));$("#profilePhotoTotal").textContent=photos.length;$("#profileFollowerTotal").textContent=profile.followers||0;$("#profileFollowingTotal").textContent=profile.following||0;$("#followProfileButton").hidden=own;$("#messageProfileButton").hidden=own;$("#openEditProfileButton").hidden=!own;$("#changeAvatarButton").hidden=!own;$("#changeCoverButton").hidden=!own;const links=[];if(profile.facebook)links.push(`<a href="${escapeHtml(profile.facebook)}" target="_blank">Facebook</a>`);if(profile.instagram)links.push(`<a href="${escapeHtml(profile.instagram)}" target="_blank">Instagram</a>`);if(profile.website)links.push(`<a href="${escapeHtml(profile.website)}" target="_blank">Website</a>`);if(profile.city||profile.country)links.push(`<span>📍 ${escapeHtml([profile.city,profile.country].filter(Boolean).join(", "))}</span>`);$("#profileLinks").innerHTML=links.join("");$("#profileGallery").innerHTML=photos.length?photos.map(p=>`<article data-profile-photo="${p.id}"><img src="${p.src}" alt="${escapeHtml(p.title)}"></article>`).join(""):'<p>Người dùng này chưa đăng ảnh nào.</p>';openModal("profileModal")}
-function openOwnProfile(){if(!state.currentUser)return;openProfile(getUserProfile(state.currentUser.email,state.currentUser.name))}
-function openEditProfile(){if(!state.currentUser)return;const p=getUserProfile(state.currentUser.email,state.currentUser.name);state.editingProfile=p;$("#editDisplayName").value=p.displayName||p.name;$("#editUsername").value=p.username||"";$("#editBio").value=p.bio||"";$("#editCountry").value=p.country||"";$("#editCity").value=p.city||"";$("#editFacebook").value=p.facebook||"";$("#editInstagram").value=p.instagram||"";$("#editWebsite").value=p.website||"";applyAvatar($("#editAvatarPreview"),p);applyCover($("#editCoverPreview"),p);openModal("editProfileModal")}
-function notificationKey(email){return `vistaNotifications:${email}`}
-function getNotifications(email){return safeParse(notificationKey(email),[])}
-function addNotification(email,n){const list=getNotifications(email);list.unshift({id:`n-${Date.now()}-${Math.random()}`,createdAt:new Date().toISOString(),read:false,...n});localStorage.setItem(notificationKey(email),JSON.stringify(list.slice(0,60)));if(state.currentUser?.email===email){renderNotificationBadge();renderNotifications()}}
-function renderNotificationBadge(){if(!state.currentUser)return;const count=getNotifications(state.currentUser.email).filter(n=>!n.read).length;$("#notificationBadge").textContent=count;$("#notificationBadge").hidden=!count}
-function renderNotifications(){if(!state.currentUser)return;const list=getNotifications(state.currentUser.email);$("#notificationList").innerHTML=list.length?list.map(n=>`<article class="notification-item ${n.read?"":"is-unread"}" data-notification-id="${n.id}"><div class="notification-icon">${n.type==="like"?"❤️":n.type==="comment"?"💬":"🔔"}</div><div><p><strong>${escapeHtml(n.actor||"VistaShare")}</strong> ${escapeHtml(n.text||"")}</p><time>${formatDate(n.createdAt)}</time></div></article>`).join(""):'<div class="notification-empty">Chưa có thông báo mới.</div>'}
-function toggleNotifications(){if(!state.currentUser)return;renderNotifications();$("#notificationPanel").hidden=!$("#notificationPanel").hidden;$("#profileMenu").hidden=true}
-function chatKey(email){return `vistaChats:${email}`}
-function getChats(){return state.currentUser?safeParse(chatKey(state.currentUser.email),[]):[]}
-function saveChats(chats){if(state.currentUser)localStorage.setItem(chatKey(state.currentUser.email),JSON.stringify(chats))}
-function ensureChat(profile){let chats=getChats();let chat=chats.find(c=>c.partner.email===profile.email);if(!chat){chat={id:`chat-${Date.now()}`,partner:{email:profile.email,name:profile.displayName||profile.name,avatar:profile.avatar||""},messages:[{id:`m-${Date.now()}`,from:"them",text:`Xin chào, rất vui được kết nối với bạn trên VistaShare.`,createdAt:new Date().toISOString()}],unread:0};chats.unshift(chat);saveChats(chats)}return chat}
-function renderConversations(){const q=$("#chatSearch").value.trim().toLowerCase();const chats=getChats().filter(c=>c.partner.name.toLowerCase().includes(q));$("#conversationList").innerHTML=chats.length?chats.map(c=>`<button class="conversation-item ${state.activeChatId===c.id?"is-active":""}" data-chat-id="${c.id}"><div class="mini-avatar" style="${c.partner.avatar?`background-image:url(${c.partner.avatar})`:""}">${c.partner.avatar?"":escapeHtml(c.partner.name.charAt(0))}</div><div><strong>${escapeHtml(c.partner.name)}</strong><span>${escapeHtml(c.messages.at(-1)?.text||"Chưa có tin nhắn")}</span></div></button>`).join(""):'<div class="notification-empty">Chưa có cuộc trò chuyện.</div>'}
-function openChat(profile=null){if(!state.currentUser){switchAuth("login");openModal("authModal");return}if(profile){const chat=ensureChat(profile);state.activeChatId=chat.id}renderConversations();renderActiveChat();openModal("chatModal")}
-function renderActiveChat(){const chat=getChats().find(c=>c.id===state.activeChatId);$("#chatEmpty").hidden=!!chat;$("#activeChat").hidden=!chat;if(!chat)return;$("#chatPartnerName").textContent=chat.partner.name;const av=$("#chatPartnerAvatar");av.textContent=chat.partner.avatar?"":chat.partner.name.charAt(0);av.style.backgroundImage=chat.partner.avatar?`url(${chat.partner.avatar})`:"";$("#messageList").innerHTML=chat.messages.map(m=>`<div class="message-bubble ${m.from==="me"?"mine":""}">${escapeHtml(m.text)}<time>${formatDate(m.createdAt)}</time></div>`).join("");$("#messageList").scrollTop=$("#messageList").scrollHeight;chat.unread=0;const chats=getChats().map(c=>c.id===chat.id?chat:c);saveChats(chats);renderMessageBadge()}
-function renderMessageBadge(){if(!state.currentUser)return;const count=getChats().reduce((s,c)=>s+(c.unread||0),0);$("#messageBadge").textContent=count;$("#messageBadge").hidden=!count}
+function resolveAuthorProfile(author,owner){
+  if(owner){
+    const local=getUserProfile(owner,author);
+    if(state.currentUser?.email===owner){
+      return {...local,...state.currentUser};
+    }
+    return local;
+  }
+  return {...createDefaultProfile(`author:${author}`,author),bio:`Nhiếp ảnh gia cộng đồng VistaShare.`,username:author.toLowerCase().replace(/\s+/g,"_")};
+}
 
-$("#notificationButton").addEventListener("click",e=>{e.stopPropagation();toggleNotifications()});$("#menuNotificationsButton").addEventListener("click",toggleNotifications);$("#messageButton").addEventListener("click",()=>openChat());$("#menuMessagesButton").addEventListener("click",()=>openChat());$("#viewMyProfileButton").addEventListener("click",openOwnProfile);$("#editProfileButton").addEventListener("click",openEditProfile);$("#openEditProfileButton").addEventListener("click",()=>{closeModal("profileModal");setTimeout(openEditProfile,150)});$("#detailViewProfile").addEventListener("click",()=>{const p=getPhoto(state.currentPhotoId);if(!p)return;closeModal("detailModal");setTimeout(()=>openProfile(resolveAuthorProfile(p.author,p.owner)),170)});$("#detailAuthorRow").addEventListener("keydown",e=>{if(e.key==="Enter")$("#detailViewProfile").click()});$("#messageProfileButton").addEventListener("click",()=>{const p=state.viewedProfile;closeModal("profileModal");setTimeout(()=>openChat(p),150)});$("#profileGallery").addEventListener("click",e=>{const c=e.target.closest("[data-profile-photo]");if(c){closeModal("profileModal");setTimeout(()=>openDetail(c.dataset.profilePhoto),150)}});$("#markAllReadButton").addEventListener("click",()=>{if(!state.currentUser)return;const list=getNotifications(state.currentUser.email).map(n=>({...n,read:true}));localStorage.setItem(notificationKey(state.currentUser.email),JSON.stringify(list));renderNotifications();renderNotificationBadge()});$("#notificationList").addEventListener("click",e=>{const item=e.target.closest("[data-notification-id]");if(!item)return;const list=getNotifications(state.currentUser.email).map(n=>n.id===item.dataset.notificationId?{...n,read:true}:n);const n=list.find(n=>n.id===item.dataset.notificationId);localStorage.setItem(notificationKey(state.currentUser.email),JSON.stringify(list));renderNotificationBadge();if(n?.photoId){$("#notificationPanel").hidden=true;openDetail(n.photoId)}});document.addEventListener("click",e=>{if(!e.target.closest("#notificationPanel")&&!e.target.closest("#notificationButton"))$("#notificationPanel").hidden=true});
-$("#chooseAvatarButton").addEventListener("click",()=>$("#avatarInput").click());$("#chooseCoverButton").addEventListener("click",()=>$("#coverInput").click());$("#avatarInput").addEventListener("change",e=>fileToDataUrl(e.target.files[0],url=>{state.editingProfile.avatar=url;applyAvatar($("#editAvatarPreview"),state.editingProfile)}));$("#coverInput").addEventListener("change",e=>fileToDataUrl(e.target.files[0],url=>{state.editingProfile.cover=url;applyCover($("#editCoverPreview"),state.editingProfile)}));$("#changeAvatarButton").addEventListener("click",()=>$("#quickAvatarInput").click());$("#changeCoverButton").addEventListener("click",()=>$("#quickCoverInput").click());$("#quickAvatarInput").addEventListener("change",e=>fileToDataUrl(e.target.files[0],url=>{const p=getUserProfile(state.currentUser.email,state.currentUser.name);p.avatar=url;saveUserProfile(p);state.currentUser={...state.currentUser,...p};updateAuthUI();openProfile(p)}));$("#quickCoverInput").addEventListener("change",e=>fileToDataUrl(e.target.files[0],url=>{const p=getUserProfile(state.currentUser.email,state.currentUser.name);p.cover=url;saveUserProfile(p);openProfile(p)}));
+async function fetchAuthorProfile(author,owner){
+  const fallback=resolveAuthorProfile(author,owner);
+  if(!owner)return fallback;
+
+  try{
+    const response=await fetch(`/api/users/profile?email=${encodeURIComponent(owner)}`);
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.message||"Không tải được hồ sơ tác giả.");
+    const profile={...fallback,...result.user};
+    saveUserProfile(profile);
+    return profile;
+  }catch(error){
+    console.warn("Không tải được avatar tác giả:",error.message);
+    return fallback;
+  }
+}
+function openProfile(profile){state.viewedProfile=profile;const own=!!state.currentUser&&profile.email===state.currentUser.email;applyCover($("#profileCover"),profile);applyAvatar($("#profileAvatarLarge"),profile);$("#publicProfileName").textContent=profile.displayName||profile.name;$("#publicProfileBio").textContent=profile.bio||"Chưa có tiểu sử.";const photos=allPhotos().filter(p=>p.owner===profile.email||(!p.owner&&p.author===profile.name));$("#profilePhotoTotal").textContent=photos.length;$("#profileFollowerTotal").textContent=profile.followers||0;$("#profileFollowingTotal").textContent=profile.following||0;$("#followProfileButton").hidden=own;$("#messageProfileButton").hidden=own;$("#openEditProfileButton").hidden=!own;$("#changeAvatarButton").hidden=!own;$("#changeCoverButton").hidden=!own;const links=[];if(profile.facebook)links.push(`<a href="${escapeHtml(profile.facebook)}" target="_blank">Facebook</a>`);if(profile.instagram)links.push(`<a href="${escapeHtml(profile.instagram)}" target="_blank">Instagram</a>`);if(profile.website)links.push(`<a href="${escapeHtml(profile.website)}" target="_blank">Website</a>`);if(profile.city||profile.country)links.push(`<span>📍 ${escapeHtml([profile.city,profile.country].filter(Boolean).join(", "))}</span>`);$("#profileLinks").innerHTML=links.join("");$("#profileGallery").innerHTML=photos.length?photos.map(p=>`<article data-profile-photo="${p.id}"><img src="${p.src}" alt="${escapeHtml(p.title)}"></article>`).join(""):'<p>Người dùng này chưa đăng ảnh nào.</p>';openModal("profileModal")}
+function openOwnProfile(){if(!state.currentUser)return;openProfile({...getUserProfile(state.currentUser.email,state.currentUser.name),...state.currentUser})}
+function openEditProfile(){if(!state.currentUser)return;const p={...getUserProfile(state.currentUser.email,state.currentUser.name),...state.currentUser};state.editingProfile=p;state.editAvatarFile=null;state.editCoverFile=null;$("#editDisplayName").value=p.displayName||p.name;$("#editUsername").value=p.username||"";$("#editBio").value=p.bio||"";$("#editCountry").value=p.country||"";$("#editCity").value=p.city||"";$("#editFacebook").value=p.facebook||"";$("#editInstagram").value=p.instagram||"";$("#editWebsite").value=p.website||"";applyAvatar($("#editAvatarPreview"),p);applyCover($("#editCoverPreview"),p);openModal("editProfileModal")}
+
+function isRealPhoto(photo){
+  return Boolean(photo?.id&&String(photo.id).startsWith("images/"));
+}
+
+async function loadNotifications(silent=false){
+  if(!state.currentUser)return;
+  try{
+    const result=await apiRequest("/api/notifications");
+    state.notifications=result.notifications||[];
+    renderNotifications();
+    renderNotificationBadge();
+  }catch(error){
+    if(!silent)toast(error.message||"Không tải được thông báo.");
+  }
+}
+
+function renderNotificationBadge(){
+  if(!state.currentUser)return;
+  const count=state.notifications.filter(n=>!n.read).length;
+  $("#notificationBadge").textContent=count;
+  $("#notificationBadge").hidden=!count;
+}
+
+function renderNotifications(){
+  if(!state.currentUser)return;
+  const list=state.notifications;
+  $("#notificationList").innerHTML=list.length?list.map(n=>`
+    <article class="notification-item ${n.read?"":"is-unread"}" data-notification-id="${n.id}">
+      <div class="notification-icon">${n.type==="like"?"❤️":n.type==="comment"?"💬":n.type==="message"?"✉️":"🔔"}</div>
+      <div>
+        <p><strong>${escapeHtml(n.actor||"VistaShare")}</strong> ${escapeHtml(n.text||"")}</p>
+        <time>${formatDate(n.createdAt)}</time>
+      </div>
+    </article>`).join(""):'<div class="notification-empty">Chưa có thông báo mới.</div>';
+}
+
+async function toggleNotifications(){
+  if(!state.currentUser)return;
+  await loadNotifications(true);
+  $("#notificationPanel").hidden=!$("#notificationPanel").hidden;
+  $("#profileMenu").hidden=true;
+}
+
+async function loadConversations(silent=false){
+  if(!state.currentUser)return;
+  try{
+    const result=await apiRequest("/api/conversations");
+    state.conversations=result.conversations||[];
+    renderConversations();
+    renderMessageBadge();
+  }catch(error){
+    if(!silent)toast(error.message||"Không tải được cuộc trò chuyện.");
+  }
+}
+
+function renderConversations(){
+  const q=$("#chatSearch").value.trim().toLowerCase();
+  const chats=state.conversations.filter(c=>(c.partner?.displayName||c.partner?.name||"").toLowerCase().includes(q));
+  $("#conversationList").innerHTML=chats.length?chats.map(c=>{
+    const partner=c.partner||{};
+    const name=partner.displayName||partner.name||"Người dùng";
+    return `<button class="conversation-item ${String(state.activeChatId)===String(c.id)?"is-active":""}" data-chat-id="${c.id}">
+      <div class="mini-avatar" style="${partner.avatar?`background-image:url('${partner.avatar}');background-size:cover;background-position:center;`:""}">${partner.avatar?"":escapeHtml(name.charAt(0).toUpperCase())}</div>
+      <div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(c.lastMessage||"Chưa có tin nhắn")}</span></div>
+      ${c.unread?`<b class="conversation-unread">${c.unread}</b>`:""}
+    </button>`;
+  }).join(""):'<div class="notification-empty">Chưa có cuộc trò chuyện.</div>';
+}
+
+async function openChat(profile=null){
+  if(!state.currentUser){
+    switchAuth("login");
+    openModal("authModal");
+    return;
+  }
+
+  try{
+    if(profile){
+      if(!profile.email)throw new Error("Không tìm thấy email người nhận.");
+      if(profile.email===state.currentUser.email)throw new Error("Bạn không thể tự nhắn tin cho chính mình.");
+      const result=await apiRequest("/api/conversations",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({recipientEmail:profile.email})
+      });
+      state.activeChatId=result.conversation.id;
+    }
+
+    await loadConversations(true);
+    if(!state.activeChatId&&state.conversations.length)state.activeChatId=state.conversations[0].id;
+    await loadActiveMessages(true);
+    renderConversations();
+    openModal("chatModal");
+  }catch(error){
+    toast(error.message||"Không thể mở cuộc trò chuyện.");
+  }
+}
+
+async function loadActiveMessages(silent=false){
+  const chat=state.conversations.find(c=>String(c.id)===String(state.activeChatId));
+  $("#chatEmpty").hidden=!!chat;
+  $("#activeChat").hidden=!chat;
+  if(!chat){
+    state.activeMessages=[];
+    return;
+  }
+
+  try{
+    const result=await apiRequest(`/api/conversations/${encodeURIComponent(chat.id)}/messages`);
+    state.activeMessages=result.messages||[];
+    renderActiveChat();
+    chat.unread=0;
+    renderConversations();
+    renderMessageBadge();
+  }catch(error){
+    if(!silent)toast(error.message||"Không tải được tin nhắn.");
+  }
+}
+
+function renderActiveChat(){
+  const chat=state.conversations.find(c=>String(c.id)===String(state.activeChatId));
+  $("#chatEmpty").hidden=!!chat;
+  $("#activeChat").hidden=!chat;
+  if(!chat)return;
+
+  const partner=chat.partner||{};
+  const name=partner.displayName||partner.name||"Người dùng";
+  $("#chatPartnerName").textContent=name;
+  const av=$("#chatPartnerAvatar");
+  av.textContent=partner.avatar?"":name.charAt(0).toUpperCase();
+  av.style.backgroundImage=partner.avatar?`url('${partner.avatar}')`:"";
+  av.style.backgroundSize="cover";
+  av.style.backgroundPosition="center";
+
+  $("#messageList").innerHTML=state.activeMessages.map(m=>`
+    <div class="message-bubble ${m.from==="me"?"mine":m.from==="system"?"system-message":""}">
+      ${escapeHtml(m.text)}
+      <time>${formatDate(m.createdAt)}</time>
+    </div>`).join("");
+  $("#messageList").scrollTop=$("#messageList").scrollHeight;
+}
+
+function renderMessageBadge(){
+  if(!state.currentUser)return;
+  const count=state.conversations.reduce((total,c)=>total+(c.unread||0),0);
+  $("#messageBadge").textContent=count;
+  $("#messageBadge").hidden=!count;
+}
+
+function startSocialPolling(){
+  clearInterval(state.socialPollingTimer);
+  if(!state.currentUser)return;
+  loadNotifications(true);
+  loadConversations(true);
+  state.socialPollingTimer=setInterval(async()=>{
+    if(!state.currentUser)return;
+    await Promise.all([loadNotifications(true),loadConversations(true)]);
+    if(!$("#chatModal").hidden&&state.activeChatId)await loadActiveMessages(true);
+  },3000);
+}
+
+$("#notificationButton").addEventListener("click",e=>{e.stopPropagation();toggleNotifications()});$("#menuNotificationsButton").addEventListener("click",toggleNotifications);$("#messageButton").addEventListener("click",()=>openChat());$("#menuMessagesButton").addEventListener("click",()=>openChat());$("#viewMyProfileButton").addEventListener("click",openOwnProfile);$("#editProfileButton").addEventListener("click",openEditProfile);$("#openEditProfileButton").addEventListener("click",()=>{closeModal("profileModal");setTimeout(openEditProfile,150)});$("#detailViewProfile").addEventListener("click",async()=>{
+  const p=getPhoto(state.currentPhotoId);
+  if(!p)return;
+  const profile=await fetchAuthorProfile(p.author,p.owner);
+  closeModal("detailModal");
+  setTimeout(()=>openProfile(profile),170);
+});$("#detailAuthorRow").addEventListener("keydown",e=>{if(e.key==="Enter")$("#detailViewProfile").click()});$("#messageProfileButton").addEventListener("click",()=>{const p=state.viewedProfile;closeModal("profileModal");setTimeout(()=>openChat(p),150)});$("#profileGallery").addEventListener("click",e=>{const c=e.target.closest("[data-profile-photo]");if(c){closeModal("profileModal");setTimeout(()=>openDetail(c.dataset.profilePhoto),150)}});$("#markAllReadButton").addEventListener("click",async()=>{
+  if(!state.currentUser)return;
+  try{
+    await apiRequest("/api/notifications/read-all",{method:"PATCH"});
+    state.notifications=state.notifications.map(n=>({...n,read:true}));
+    renderNotifications();
+    renderNotificationBadge();
+  }catch(error){toast(error.message);}
+});
+$("#notificationList").addEventListener("click",async e=>{
+  const item=e.target.closest("[data-notification-id]");
+  if(!item)return;
+  const notification=state.notifications.find(n=>String(n.id)===String(item.dataset.notificationId));
+  try{
+    await apiRequest(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}/read`,{method:"PATCH"});
+    if(notification)notification.read=true;
+    renderNotificationBadge();
+    renderNotifications();
+    $("#notificationPanel").hidden=true;
+    if(notification?.photoId)openDetail(notification.photoId);
+    else if(notification?.conversationId){
+      state.activeChatId=notification.conversationId;
+      openChat();
+    }
+  }catch(error){toast(error.message);}
+});
+document.addEventListener("click",e=>{if(!e.target.closest("#notificationPanel")&&!e.target.closest("#notificationButton"))$("#notificationPanel").hidden=true});
+async function uploadProfileImage(file,type){
+  if(!file)throw new Error("Bạn chưa chọn ảnh.");
+  if(!["image/jpeg","image/png","image/webp","image/gif"].includes(file.type))throw new Error("Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF.");
+  if(file.size>8*1024*1024)throw new Error("Ảnh không được vượt quá 8 MB.");
+
+  const formData=new FormData();
+  formData.append("image",file);
+  formData.append("type",type);
+  const result=await apiRequest("/api/profile/image",{method:"POST",body:formData});
+  saveAuthSession(getAuthToken(),result.user);
+  state.currentUser=result.user;
+  saveUserProfile({...getUserProfile(result.user.email,result.user.name),...result.user});
+  updateAuthUI();
+  return result.user;
+}
+
+$("#chooseAvatarButton").addEventListener("click",()=>$("#avatarInput").click());
+$("#chooseCoverButton").addEventListener("click",()=>$("#coverInput").click());
+$("#avatarInput").addEventListener("change",e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  state.editAvatarFile=file;
+  fileToDataUrl(file,url=>{state.editingProfile.avatar=url;applyAvatar($("#editAvatarPreview"),state.editingProfile)});
+});
+$("#coverInput").addEventListener("change",e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  state.editCoverFile=file;
+  fileToDataUrl(file,url=>{state.editingProfile.cover=url;applyCover($("#editCoverPreview"),state.editingProfile)});
+});
+$("#changeAvatarButton").addEventListener("click",()=>$("#quickAvatarInput").click());
+$("#changeCoverButton").addEventListener("click",()=>$("#quickCoverInput").click());
+$("#quickAvatarInput").addEventListener("change",async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  try{
+    toast("Đang tải ảnh đại diện...");
+    const user=await uploadProfileImage(file,"avatar");
+    openProfile({...getUserProfile(user.email,user.name),...user});
+    toast("Đã cập nhật ảnh đại diện.");
+  }catch(error){console.error(error);toast(error.message||"Không thể cập nhật ảnh đại diện.");}
+  finally{e.target.value="";}
+});
+$("#quickCoverInput").addEventListener("change",async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  try{
+    toast("Đang tải ảnh bìa...");
+    const user=await uploadProfileImage(file,"cover");
+    openProfile({...getUserProfile(user.email,user.name),...user});
+    toast("Đã cập nhật ảnh bìa.");
+  }catch(error){console.error(error);toast(error.message||"Không thể cập nhật ảnh bìa.");}
+  finally{e.target.value="";}
+});
 function normalizeProfileUrl(value){const v=value.trim();if(!v)return "";return /^https?:\/\//i.test(v)?v:`https://${v}`;}
-$("#editProfileForm").addEventListener("submit",e=>{
+$("#editProfileForm").addEventListener("submit",async e=>{
   e.preventDefault();
   if(!state.currentUser||!state.editingProfile)return toast("Không tìm thấy tài khoản đang chỉnh sửa.");
   const displayName=$("#editDisplayName").value.trim();
   const username=$("#editUsername").value.trim().replace(/\s+/g,"_");
   if(!displayName||!username)return toast("Tên hiển thị và tên người dùng không được để trống.");
-  const p={...state.editingProfile,displayName,name:displayName,username,bio:$("#editBio").value.trim(),country:$("#editCountry").value.trim(),city:$("#editCity").value.trim(),facebook:normalizeProfileUrl($("#editFacebook").value),instagram:normalizeProfileUrl($("#editInstagram").value),website:normalizeProfileUrl($("#editWebsite").value)};
+
+  const submitButton=e.currentTarget.querySelector('button[type="submit"]');
+  if(submitButton){submitButton.disabled=true;submitButton.textContent="Đang lưu...";}
+
   try{
+    const result=await apiRequest("/api/profile",{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        displayName,
+        username,
+        bio:$("#editBio").value.trim(),
+        country:$("#editCountry").value.trim(),
+        city:$("#editCity").value.trim(),
+        facebook:normalizeProfileUrl($("#editFacebook").value),
+        instagram:normalizeProfileUrl($("#editInstagram").value),
+        website:normalizeProfileUrl($("#editWebsite").value)
+      })
+    });
+
+    let user=result.user;
+    if(state.editAvatarFile)user=await uploadProfileImage(state.editAvatarFile,"avatar");
+    if(state.editCoverFile)user=await uploadProfileImage(state.editCoverFile,"cover");
+
+    saveAuthSession(getAuthToken(),user);
+    state.currentUser=user;
+    const p={...getUserProfile(user.email,user.name),...user};
     saveUserProfile(p);
-    
     state.uploadedPhotos=state.uploadedPhotos.map(photo=>photo.owner===p.email?{...photo,author:displayName}:photo);
     persistPhotos();
-    state.currentUser={...state.currentUser,...p};
-    localStorage.setItem("vistaCurrentUser",JSON.stringify(state.currentUser));
-    updateAuthUI();renderPhotos();closeModal("editProfileModal");toast("Đã lưu thay đổi hồ sơ.");
+    updateAuthUI();
+    renderPhotos();
+    closeModal("editProfileModal");
+    toast("Đã lưu thay đổi hồ sơ.");
     setTimeout(()=>openProfile(p),190);
-  }catch(error){console.error(error);toast("Không thể lưu hồ sơ. Bộ nhớ trình duyệt có thể đã đầy.");}
+  }catch(error){
+    console.error(error);
+    toast(error.message||"Không thể lưu hồ sơ.");
+  }finally{
+    state.editAvatarFile=null;
+    state.editCoverFile=null;
+    $("#avatarInput").value="";
+    $("#coverInput").value="";
+    if(submitButton){submitButton.disabled=false;submitButton.textContent="Lưu thay đổi";}
+  }
 });
-$("#conversationList").addEventListener("click",e=>{const c=e.target.closest("[data-chat-id]");if(!c)return;state.activeChatId=c.dataset.chatId;renderConversations();renderActiveChat()});$("#chatSearch").addEventListener("input",renderConversations);$("#messageForm").addEventListener("submit",e=>{e.preventDefault();const text=$("#messageInput").value.trim();if(!text)return;const chats=getChats();const chat=chats.find(c=>c.id===state.activeChatId);if(!chat)return;chat.messages.push({id:`m-${Date.now()}`,from:"me",text,createdAt:new Date().toISOString()});saveChats(chats);$("#messageInput").value="";renderConversations();renderActiveChat();setTimeout(()=>{const cs=getChats(),ch=cs.find(c=>c.id===state.activeChatId);if(!ch)return;ch.messages.push({id:`m-${Date.now()}`,from:"them",text:"Cảm ơn bạn đã nhắn tin. Mình sẽ phản hồi sớm.",createdAt:new Date().toISOString()});saveChats(cs);renderConversations();renderActiveChat()},900)});
+$("#conversationList").addEventListener("click",async e=>{
+  const c=e.target.closest("[data-chat-id]");
+  if(!c)return;
+  state.activeChatId=c.dataset.chatId;
+  renderConversations();
+  await loadActiveMessages();
+});
+$("#chatSearch").addEventListener("input",renderConversations);
+$("#messageForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const text=$("#messageInput").value.trim();
+  if(!text||!state.activeChatId)return;
+  const submitButton=e.currentTarget.querySelector('button[type="submit"]');
+  if(submitButton)submitButton.disabled=true;
+  try{
+    await apiRequest(`/api/conversations/${encodeURIComponent(state.activeChatId)}/messages`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text})
+    });
+    $("#messageInput").value="";
+    await Promise.all([loadActiveMessages(true),loadConversations(true)]);
+  }catch(error){toast(error.message||"Không thể gửi tin nhắn.");}
+  finally{if(submitButton)submitButton.disabled=false;}
+});
 
-// Seed a welcome notification for new local demo accounts
-if(state.currentUser&&getNotifications(state.currentUser.email).length===0){addNotification(state.currentUser.email,{type:"system",actor:"VistaShare",text:"chào mừng bạn. Hãy hoàn thiện hồ sơ và bắt đầu chia sẻ ảnh."})}
 
+
+async function apiRequest(url,options={}){
+  const headers={...(options.headers||{})};
+  const token=getAuthToken();
+  if(token)headers.Authorization=`Bearer ${token}`;
+  const response=await fetch(url,{...options,headers});
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(result.message||"Yêu cầu thất bại.");
+  return result;
+}
+
+async function loadCategories(){
+  try{
+    const result=await apiRequest("/api/categories");
+    state.categories=result.categories||[];
+    if(state.activeCategory!=="Tất cả"&&!state.categories.some(c=>c.name===state.activeCategory))state.activeCategory="Tất cả";
+    renderCategories();
+    renderPhotos();
+  }catch(error){console.error(error);toast(error.message||"Không tải được danh mục.")}
+}
+
+function canDeleteCategory(category){
+  if(!state.currentUser)return false;
+  if(state.currentUser.role==="admin")return true;
+  const creator=String(category.createdBy?._id||category.createdBy||"");
+  return !category.isSystem&&creator===String(state.currentUser.id||state.currentUser._id||"");
+}
+
+function renderCategoryManager(){
+  $("#categoryAdminList").innerHTML=state.categories.map(category=>{
+    const source=category.isSystem?"Danh mục hệ thống":category.createdByRole==="admin"?"Do quản trị viên tạo":"Danh mục cộng đồng";
+    return `<article class="category-admin-item"><div class="category-admin-item__meta"><strong>${escapeHtml(category.name)}</strong><span>${source}</span></div>${canDeleteCategory(category)?`<button type="button" data-delete-category="${category._id}">Xóa</button>`:""}</article>`;
+  }).join("")||"<p>Chưa có danh mục.</p>";
+}
+
+$("#manageCategoriesButton").addEventListener("click",()=>{
+  renderCategoryManager();
+  $("#categoryError").textContent="";
+  openModal("categoryManagerModal");
+});
+
+$("#categoryCreateForm").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const name=$("#newCategoryName").value.trim();
+  const button=event.currentTarget.querySelector('button[type="submit"]');
+  $("#categoryError").textContent="";
+  button.disabled=true;
+  try{
+    await apiRequest("/api/categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    event.currentTarget.reset();
+    await loadCategories();
+    renderCategoryManager();
+    toast("Đã thêm danh mục.");
+  }catch(error){$("#categoryError").textContent=error.message}
+  finally{button.disabled=false}
+});
+
+$("#categoryAdminList").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-delete-category]");
+  if(!button)return;
+  if(!confirm("Bạn chắc chắn muốn xóa danh mục này?"))return;
+  button.disabled=true;
+  try{
+    await apiRequest(`/api/categories/${button.dataset.deleteCategory}`,{method:"DELETE"});
+    await loadCategories();
+    renderCategoryManager();
+    toast("Đã xóa danh mục.");
+  }catch(error){toast(error.message)}
+  finally{button.disabled=false}
+});
+
+function renderAdminUsers(){
+  $("#adminUsersPanel").innerHTML=state.adminUsers.map(user=>`<article class="admin-user-row"><div class="admin-row-info"><strong>${escapeHtml(user.displayName||user.name)}</strong><span>${escapeHtml(user.email)}</span></div><span class="admin-role-pill ${user.role==="admin"?"is-admin":""}">${user.role==="admin"?"Quản trị viên":"Thành viên"}</span></article>`).join("")||"<p>Chưa có tài khoản.</p>";
+}
+
+function renderAdminImages(){
+  $("#adminImagesPanel").innerHTML=state.adminImages.map(image=>`<article class="admin-image-row"><img src="${image.url||image.src}" alt="${escapeHtml(image.title)}"><div class="admin-row-info"><strong>${escapeHtml(image.title||image.name)}</strong><span>${escapeHtml(image.author||"VistaShare")} · ${escapeHtml(image.category||"")}</span><span>${escapeHtml(image.owner||"Không có email chủ sở hữu")}</span></div><button class="admin-delete-button" type="button" data-admin-delete-image="${escapeHtml(image.key)}">Xóa bài đăng</button></article>`).join("")||"<p>Chưa có bài đăng.</p>";
+}
+
+async function openAdminDashboard(){
+  if(state.currentUser?.role!=="admin")return toast("Bạn không có quyền quản trị.");
+  openModal("adminDashboardModal");
+  $("#adminImagesPanel").innerHTML="<p>Đang tải dữ liệu...</p>";
+  try{
+    const [userResult,imageResult]=await Promise.all([apiRequest("/api/admin/users"),apiRequest("/api/admin/images")]);
+    state.adminUsers=userResult.users||[];
+    state.adminImages=imageResult.images||[];
+    $("#adminUserCount").textContent=state.adminUsers.length;
+    $("#adminImageCount").textContent=state.adminImages.length;
+    $("#adminCategoryCount").textContent=state.categories.length;
+    renderAdminUsers();
+    renderAdminImages();
+  }catch(error){$("#adminImagesPanel").innerHTML=`<p class="form-error">${escapeHtml(error.message)}</p>`}
+}
+
+$("#adminDashboardButton").addEventListener("click",openAdminDashboard);
+$(".admin-tabs-simple").addEventListener("click",event=>{
+  const button=event.target.closest("[data-admin-tab]");
+  if(!button)return;
+  $$(".admin-tabs-simple button").forEach(item=>item.classList.toggle("is-active",item===button));
+  $("#adminImagesPanel").hidden=button.dataset.adminTab!=="images";
+  $("#adminUsersPanel").hidden=button.dataset.adminTab!=="users";
+});
+
+$("#adminImagesPanel").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-admin-delete-image]");
+  if(!button)return;
+  if(!confirm("Xóa vĩnh viễn bài đăng vi phạm khỏi Amazon S3?"))return;
+  button.disabled=true;
+  try{
+    await apiRequest("/api/images",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:button.dataset.adminDeleteImage})});
+    state.adminImages=state.adminImages.filter(image=>image.key!==button.dataset.adminDeleteImage);
+    $("#adminImageCount").textContent=state.adminImages.length;
+    renderAdminImages();
+    await loadImagesFromS3();
+    toast("Đã xóa bài đăng.");
+  }catch(error){toast(error.message)}
+  finally{button.disabled=false}
+});
 
 async function loadImagesFromS3(){
   try{
@@ -695,5 +1287,6 @@ async function loadImagesFromS3(){
   }
 }
 
+loadCategories();
 loadImagesFromS3();
 restoreAuthSession();
