@@ -6,13 +6,232 @@
   <meta name="description" content="VistaShare - chia sẻ, khám phá và tải ảnh chất lượng cao." />
   <title>VistaShare | Chia sẻ ảnh</title>
   <link rel="stylesheet" href="styles.css" />
+
+  <style>
+    .vistashare-footer {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      margin-top: 4rem;
+      padding: 4.5rem clamp(1.25rem, 5vw, 5rem) 1.5rem;
+      color: #17315f;
+      background:
+        linear-gradient(120deg,
+          rgba(219, 234, 254, .92),
+          rgba(238, 242, 255, .92),
+          rgba(240, 253, 250, .92),
+          rgba(254, 249, 195, .88),
+          rgba(254, 226, 226, .86),
+          rgba(243, 232, 255, .90),
+          rgba(219, 234, 254, .92));
+      background-size: 350% 350%;
+      animation: vistaRainbowMove 16s ease-in-out infinite;
+      border-top: 1px solid rgba(37, 99, 235, .14);
+    }
+
+    .vistashare-footer::before,
+    .vistashare-footer::after {
+      position: absolute;
+      z-index: -1;
+      content: "";
+      width: 22rem;
+      height: 22rem;
+      border-radius: 50%;
+      filter: blur(70px);
+      opacity: .32;
+      pointer-events: none;
+      animation: vistaOrbFloat 12s ease-in-out infinite alternate;
+    }
+
+    .vistashare-footer::before {
+      top: -8rem;
+      left: -6rem;
+      background: #60a5fa;
+    }
+
+    .vistashare-footer::after {
+      right: -7rem;
+      bottom: -10rem;
+      background: #c084fc;
+      animation-delay: -5s;
+    }
+
+    .vistashare-footer__grid {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(260px, 1.3fr) repeat(3, minmax(160px, .7fr));
+      gap: clamp(2rem, 5vw, 5rem);
+    }
+
+    .vistashare-footer__brand h2 {
+      margin: 0 0 .9rem;
+      color: #2563eb;
+      font-size: clamp(2rem, 4vw, 3rem);
+      letter-spacing: -.06em;
+    }
+
+    .vistashare-footer__brand p {
+      max-width: 34rem;
+      margin: 0;
+      color: #52627a;
+      line-height: 1.75;
+    }
+
+    .vistashare-footer h3 {
+      margin: 0 0 1rem;
+      color: #172033;
+      font-size: 1rem;
+    }
+
+    .vistashare-footer ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .vistashare-footer li + li {
+      margin-top: .75rem;
+    }
+
+    .vistashare-footer a {
+      color: #5b6679;
+      text-decoration: none;
+      transition: color .2s ease, transform .2s ease;
+    }
+
+    .vistashare-footer a:hover {
+      color: #2563eb;
+    }
+
+    .vistashare-footer__author {
+      padding: 1.15rem;
+      border: 1px solid rgba(255, 255, 255, .65);
+      border-radius: 1.25rem;
+      background: rgba(255, 255, 255, .58);
+      box-shadow: 0 18px 45px rgba(31, 41, 55, .08);
+      backdrop-filter: blur(16px);
+    }
+
+    .vistashare-footer__author p {
+      margin: .45rem 0;
+      color: #536078;
+      line-height: 1.55;
+    }
+
+    .vistashare-footer__bottom {
+      width: min(1440px, 100%);
+      margin: 3rem auto 0;
+      padding-top: 1.25rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      color: #667085;
+      border-top: 1px solid rgba(37, 99, 235, .13);
+      font-size: .9rem;
+    }
+
+    @keyframes vistaRainbowMove {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes vistaOrbFloat {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(3rem, 1.5rem, 0) scale(1.14); }
+    }
+
+    @media (max-width: 900px) {
+      .vistashare-footer__grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 580px) {
+      .vistashare-footer {
+        padding-top: 3rem;
+      }
+
+      .vistashare-footer__grid {
+        grid-template-columns: 1fr;
+      }
+
+      .vistashare-footer__bottom {
+        flex-direction: column;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .vistashare-footer,
+      .vistashare-footer::before,
+      .vistashare-footer::after {
+        animation: none;
+      }
+    }
+  </style>
+
+
+  <style>
+    /* Nền thanh logo chuyển màu nhẹ giống footer */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background:
+        linear-gradient(
+          115deg,
+          rgba(239, 246, 255, 0.96),
+          rgba(238, 242, 255, 0.96),
+          rgba(240, 253, 250, 0.96),
+          rgba(254, 249, 195, 0.90),
+          rgba(254, 226, 226, 0.90),
+          rgba(243, 232, 255, 0.94),
+          rgba(239, 246, 255, 0.96)
+        ) !important;
+      background-size: 320% 320% !important;
+      animation: vistaHeaderRainbow 14s ease-in-out infinite;
+      border-bottom: 1px solid rgba(37, 99, 235, 0.14);
+      box-shadow: 0 8px 30px rgba(37, 99, 235, 0.06);
+      backdrop-filter: blur(18px);
+    }
+
+    .site-header::before {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 10% 20%, rgba(96, 165, 250, .15), transparent 26%),
+        radial-gradient(circle at 85% 30%, rgba(192, 132, 252, .13), transparent 24%);
+    }
+
+    .brand-word {
+      color: #2563eb !important;
+      -webkit-text-fill-color: #2563eb !important;
+    }
+
+    @keyframes vistaHeaderRainbow {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .site-header {
+        animation: none;
+      }
+    }
+  </style>
+
 </head>
 <body>
   <header class="site-header" id="siteHeader">
     <a class="logo brand-logo" href="#" aria-label="Trang chủ VistaShare">
-      <span class="brand-logo__icon" aria-hidden="true">
+    
         <!-- Thay YOUR_LOGO_IMAGE_URL bằng link ảnh logo của bạn -->
-        <img src="https://ibb.co/Fk2P4wpC" alt="Logo VistaShare" />
+        <a href="https://imgbb.com/"><img src="https://i.ibb.co/Z1JbmBxV/test-removebg-preview.png" alt="test removebg preview" border="0" width="60"></a>
       </span>
       <span class="brand-word">VistaShare</span>
     </a>
@@ -79,6 +298,50 @@
       <p class="empty-state" id="emptyState" hidden>Không tìm thấy ảnh phù hợp.</p>
     </section>
   </main>
+
+
+  <footer class="vistashare-footer" aria-labelledby="footerTitle">
+    <div class="vistashare-footer__grid">
+      <section class="vistashare-footer__brand">
+        <h2 id="footerTitle">VistaShare</h2>
+        <p>
+          Không gian chia sẻ và khám phá hình ảnh dành cho cộng đồng sáng tạo.
+          Tìm cảm hứng, kết nối với tác giả và lưu lại những khoảnh khắc bạn yêu thích.
+        </p>
+      </section>
+
+      <section>
+        <h3>Khám phá</h3>
+        <ul>
+          <li><a href="#gallery">Ảnh mới nhất</a></li>
+          <li><a href="#gallery">Ảnh nổi bật</a></li>
+          <li><a href="#categoryMenu">Danh mục ảnh</a></li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Thông tin</h3>
+        <ul>
+          <li><a href="#">Giới thiệu</a></li>
+          <li><a href="#">Điều khoản sử dụng</a></li>
+          <li><a href="#">Chính sách bảo mật</a></li>
+        </ul>
+      </section>
+
+      <section class="vistashare-footer__author">
+        <h3>Tác giả</h3>
+        <p><strong>Thực hiện:</strong> Tên của bạn / Nhóm VistaShare</p>
+        <p><strong>Đề tài:</strong> Website chia sẻ hình ảnh cộng đồng</p>
+        <p><strong>Liên hệ:</strong> <a href="mailto:your-email@example.com">your-email@example.com</a></p>
+      </section>
+    </div>
+
+    <div class="vistashare-footer__bottom">
+      <span>© 2026 VistaShare. All rights reserved.</span>
+      <span>Thiết kế dành cho cộng đồng yêu nhiếp ảnh.</span>
+    </div>
+  </footer>
+
 
   <div class="modal" id="authModal" hidden>
     <div class="modal__backdrop" data-close-modal="authModal"></div>
