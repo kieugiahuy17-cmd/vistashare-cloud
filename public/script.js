@@ -194,9 +194,11 @@ function updateAuthUI(){
   $("#profileEmail").textContent=p.email;
 
   const isAdmin=p.role==="admin";
-  $("#accountRole").textContent=isAdmin?"Quản trị viên":"Thành viên";
+  const isModerator=p.role==="moderator";
+  $("#accountRole").textContent=isAdmin?"Quản trị viên":isModerator?"Kiểm duyệt viên (MOD)":"Thành viên";
   $("#accountRole").classList.toggle("is-admin",isAdmin);
-  $("#adminDashboardButton").hidden=!isAdmin;
+  $("#accountRole").classList.toggle("is-moderator",isModerator);
+  $("#adminDashboardButton").hidden=!(isAdmin||isModerator);
 
   renderNotificationBadge();
   renderMessageBadge();
@@ -712,7 +714,7 @@ renderPhotos();
 
 /* Social profile, notifications and Messenger-style chat */
 function profileKey(email){return `vistaProfile:${email}`}
-function createDefaultProfile(email,name){return {email,name,displayName:name,username:(email.split("@")[0]||"user").replace(/[^a-zA-Z0-9_]/g,"_"),bio:"Chia sẻ những khoảnh khắc truyền cảm hứng trên VistaShare.",country:"",city:"",facebook:"",instagram:"",website:"",avatar:"",cover:"",followers:0,following:0}}
+function createDefaultProfile(email,name){return {email,name,displayName:name,username:(email.split("@")[0]||"user").replace(/[^a-zA-Z0-9_]/g,"_"),bio:"Chia sẻ những khoảnh khắc truyền cảm hứng trên VistaShare.",country:"",city:"",hometown:"",relationship:"",education:"",workplace:"",facebook:"",instagram:"",youtube:"",tiktok:"",website:"",avatar:"",cover:"",followers:0,following:0}}
 function getUserProfile(email,name="Người dùng"){return {...createDefaultProfile(email,name),...safeParse(profileKey(email),{})}}
 function saveUserProfile(profile){localStorage.setItem(profileKey(profile.email),JSON.stringify(profile))}
 function applyAvatar(el,p){
@@ -754,9 +756,77 @@ async function fetchAuthorProfile(author,owner){
     return fallback;
   }
 }
-function openProfile(profile){state.viewedProfile=profile;const own=!!state.currentUser&&profile.email===state.currentUser.email;applyCover($("#profileCover"),profile);applyAvatar($("#profileAvatarLarge"),profile);$("#publicProfileName").textContent=profile.displayName||profile.name;$("#publicProfileBio").textContent=profile.bio||"Chưa có tiểu sử.";const photos=allPhotos().filter(p=>p.owner===profile.email||(!p.owner&&p.author===profile.name));$("#profilePhotoTotal").textContent=photos.length;$("#profileFollowerTotal").textContent=profile.followers||0;$("#profileFollowingTotal").textContent=profile.following||0;$("#followProfileButton").hidden=own;$("#messageProfileButton").hidden=own;$("#openEditProfileButton").hidden=!own;$("#changeAvatarButton").hidden=!own;$("#changeCoverButton").hidden=!own;const links=[];if(profile.facebook)links.push(`<a href="${escapeHtml(profile.facebook)}" target="_blank">Facebook</a>`);if(profile.instagram)links.push(`<a href="${escapeHtml(profile.instagram)}" target="_blank">Instagram</a>`);if(profile.website)links.push(`<a href="${escapeHtml(profile.website)}" target="_blank">Website</a>`);if(profile.city||profile.country)links.push(`<span>📍 ${escapeHtml([profile.city,profile.country].filter(Boolean).join(", "))}</span>`);$("#profileLinks").innerHTML=links.join("");$("#profileGallery").innerHTML=photos.length?photos.map(p=>`<article data-profile-photo="${p.id}"><img src="${p.src}" alt="${escapeHtml(p.title)}"></article>`).join(""):'<p>Người dùng này chưa đăng ảnh nào.</p>';openModal("profileModal")}
+function normalizeExternalUrl(value){
+  const raw=String(value||"").trim();
+  if(!raw)return "";
+  try{
+    const url=new URL(/^https?:\/\//i.test(raw)?raw:`https://${raw}`);
+    return ["http:","https:"].includes(url.protocol)?url.href:"";
+  }catch{return "";}
+}
+function openProfile(profile){
+  state.viewedProfile=profile;
+  const own=!!state.currentUser&&profile.email===state.currentUser.email;
+  applyCover($("#profileCover"),profile);
+  applyAvatar($("#profileAvatarLarge"),profile);
+  $("#publicProfileName").textContent=profile.displayName||profile.name;
+  $("#publicProfileBio").textContent=profile.bio||"Chưa có tiểu sử.";
+  const photos=allPhotos().filter(p=>p.owner===profile.email||(!p.owner&&p.author===profile.name));
+  $("#profilePhotoTotal").textContent=photos.length;
+  $("#profileFollowerTotal").textContent=profile.followers||0;
+  $("#profileFollowingTotal").textContent=profile.following||0;
+  $("#followProfileButton").hidden=own;
+  $("#messageProfileButton").hidden=own;
+  $("#openEditProfileButton").hidden=!own;
+  $("#changeAvatarButton").hidden=!own;
+  $("#changeCoverButton").hidden=!own;
+
+  const facts=[
+    profile.city&&["📍","Đang sống tại",profile.city],
+    profile.hometown&&["🏡","Quê quán",profile.hometown],
+    profile.relationship&&["❤️","Quan hệ",profile.relationship],
+    profile.education&&["🎓","Học tại",profile.education],
+    profile.workplace&&["💼","Làm việc tại",profile.workplace],
+    profile.country&&["🌏","Quốc gia",profile.country]
+  ].filter(Boolean);
+  $("#profileInfoGrid").innerHTML=facts.length?facts.map(([icon,label,value])=>`<article class="profile-info-item"><span>${icon}</span><div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div></article>`).join(""):'<p class="profile-info-empty">Người dùng chưa chia sẻ thêm thông tin cá nhân.</p>';
+
+  const socialLinks=[
+    ["Facebook",profile.facebook,"social-facebook"],
+    ["Instagram",profile.instagram,"social-instagram"],
+    ["YouTube",profile.youtube,"social-youtube"],
+    ["TikTok",profile.tiktok,"social-tiktok"],
+    ["Website",profile.website,"social-website"]
+  ].map(([label,value,className])=>[label,normalizeExternalUrl(value),className]).filter(([,url])=>url);
+  $("#profileLinks").innerHTML=socialLinks.map(([label,url,className])=>`<a class="profile-social-link ${className}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)} ↗</a>`).join("");
+  $("#profileGallery").innerHTML=photos.length?photos.map(p=>`<article data-profile-photo="${p.id}"><img src="${p.src}" alt="${escapeHtml(p.title)}"></article>`).join(""):'<p>Người dùng này chưa đăng ảnh nào.</p>';
+  openModal("profileModal");
+}
 function openOwnProfile(){if(!state.currentUser)return;openProfile({...getUserProfile(state.currentUser.email,state.currentUser.name),...state.currentUser})}
-function openEditProfile(){if(!state.currentUser)return;const p={...getUserProfile(state.currentUser.email,state.currentUser.name),...state.currentUser};state.editingProfile=p;state.editAvatarFile=null;state.editCoverFile=null;$("#editDisplayName").value=p.displayName||p.name;$("#editUsername").value=p.username||"";$("#editBio").value=p.bio||"";$("#editCountry").value=p.country||"";$("#editCity").value=p.city||"";$("#editFacebook").value=p.facebook||"";$("#editInstagram").value=p.instagram||"";$("#editWebsite").value=p.website||"";applyAvatar($("#editAvatarPreview"),p);applyCover($("#editCoverPreview"),p);openModal("editProfileModal")}
+function openEditProfile(){
+  if(!state.currentUser)return;
+  const p={...getUserProfile(state.currentUser.email,state.currentUser.name),...state.currentUser};
+  state.editingProfile=p;
+  state.editAvatarFile=null;
+  state.editCoverFile=null;
+  $("#editDisplayName").value=p.displayName||p.name;
+  $("#editUsername").value=p.username||"";
+  $("#editBio").value=p.bio||"";
+  $("#editCountry").value=p.country||"";
+  $("#editCity").value=p.city||"";
+  $("#editHometown").value=p.hometown||"";
+  $("#editRelationship").value=p.relationship||"";
+  $("#editEducation").value=p.education||"";
+  $("#editWorkplace").value=p.workplace||"";
+  $("#editFacebook").value=p.facebook||"";
+  $("#editInstagram").value=p.instagram||"";
+  $("#editYoutube").value=p.youtube||"";
+  $("#editTiktok").value=p.tiktok||"";
+  $("#editWebsite").value=p.website||"";
+  applyAvatar($("#editAvatarPreview"),p);
+  applyCover($("#editCoverPreview"),p);
+  openModal("editProfileModal");
+}
 
 function isRealPhoto(photo){
   return Boolean(photo?.id&&String(photo.id).startsWith("images/"));
@@ -1027,8 +1097,14 @@ $("#editProfileForm").addEventListener("submit",async e=>{
         bio:$("#editBio").value.trim(),
         country:$("#editCountry").value.trim(),
         city:$("#editCity").value.trim(),
+        hometown:$("#editHometown").value.trim(),
+        relationship:$("#editRelationship").value,
+        education:$("#editEducation").value.trim(),
+        workplace:$("#editWorkplace").value.trim(),
         facebook:normalizeProfileUrl($("#editFacebook").value),
         instagram:normalizeProfileUrl($("#editInstagram").value),
+        youtube:normalizeProfileUrl($("#editYoutube").value),
+        tiktok:normalizeProfileUrl($("#editTiktok").value),
         website:normalizeProfileUrl($("#editWebsite").value)
       })
     });
@@ -1129,18 +1205,24 @@ $("#manageCategoriesButton").addEventListener("click",()=>{
 
 $("#categoryCreateForm").addEventListener("submit",async event=>{
   event.preventDefault();
+  const form=event.currentTarget;
   const name=$("#newCategoryName").value.trim();
-  const button=event.currentTarget.querySelector('button[type="submit"]');
+  const button=form.querySelector('button[type="submit"]');
   $("#categoryError").textContent="";
   button.disabled=true;
+  button.textContent="Đang thêm...";
   try{
-    await apiRequest("/api/categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
-    event.currentTarget.reset();
+    const result=await apiRequest("/api/categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    form.reset();
     await loadCategories();
     renderCategoryManager();
-    toast("Đã thêm danh mục.");
-  }catch(error){$("#categoryError").textContent=error.message}
-  finally{button.disabled=false}
+    toast(result.message||`Đã thêm danh mục “${name}” thành công.`);
+  }catch(error){
+    $("#categoryError").textContent=error.message||"Không thể thêm danh mục.";
+  }finally{
+    button.disabled=false;
+    button.textContent="Thêm danh mục";
+  }
 });
 
 $("#categoryAdminList").addEventListener("click",async event=>{
@@ -1157,8 +1239,25 @@ $("#categoryAdminList").addEventListener("click",async event=>{
   finally{button.disabled=false}
 });
 
+function roleLabel(role){return role==="admin"?"Quản trị viên":role==="moderator"?"Kiểm duyệt viên":"Thành viên";}
 function renderAdminUsers(){
-  $("#adminUsersPanel").innerHTML=state.adminUsers.map(user=>`<article class="admin-user-row"><div class="admin-row-info"><strong>${escapeHtml(user.displayName||user.name)}</strong><span>${escapeHtml(user.email)}</span></div><span class="admin-role-pill ${user.role==="admin"?"is-admin":""}">${user.role==="admin"?"Quản trị viên":"Thành viên"}</span></article>`).join("")||"<p>Chưa có tài khoản.</p>";
+  const currentId=String(state.currentUser?.id||state.currentUser?._id||"");
+  $("#adminUsersPanel").innerHTML=state.adminUsers.map(user=>{
+    const userId=String(user._id||user.id||"");
+    const isSelf=userId===currentId;
+    return `<article class="admin-user-row admin-user-row--managed">
+      <div class="admin-row-info"><strong>${escapeHtml(user.displayName||user.name)}</strong><span>${escapeHtml(user.email)}</span><small>Tham gia: ${user.createdAt?formatDate(user.createdAt):"Không rõ"}</small></div>
+      <div class="admin-user-controls">
+        <select data-admin-role-user="${escapeHtml(userId)}" ${isSelf?"disabled":""} aria-label="Vai trò tài khoản">
+          <option value="user" ${user.role==="user"?"selected":""}>Thành viên</option>
+          <option value="moderator" ${user.role==="moderator"?"selected":""}>Kiểm duyệt viên (MOD)</option>
+          <option value="admin" ${user.role==="admin"?"selected":""}>Quản trị viên</option>
+        </select>
+        <span class="admin-role-pill ${user.role==="admin"?"is-admin":user.role==="moderator"?"is-moderator":""}">${roleLabel(user.role)}</span>
+        <button class="admin-delete-user-button" type="button" data-admin-delete-user="${escapeHtml(userId)}" ${isSelf?"disabled title='Không thể tự xóa tài khoản đang đăng nhập'":""}>Xóa tài khoản</button>
+      </div>
+    </article>`;
+  }).join("")||"<p>Chưa có tài khoản.</p>";
 }
 
 function renderAdminImages(){
@@ -1166,18 +1265,28 @@ function renderAdminImages(){
 }
 
 async function openAdminDashboard(){
-  if(state.currentUser?.role!=="admin")return toast("Bạn không có quyền quản trị.");
+  const role=state.currentUser?.role;
+  if(!["admin","moderator"].includes(role))return toast("Bạn không có quyền kiểm duyệt.");
   openModal("adminDashboardModal");
   $("#adminImagesPanel").innerHTML="<p>Đang tải dữ liệu...</p>";
+  const usersTab=$("[data-admin-tab='users']");
+  if(usersTab)usersTab.hidden=role!=="admin";
   try{
-    const [userResult,imageResult]=await Promise.all([apiRequest("/api/admin/users"),apiRequest("/api/admin/images")]);
-    state.adminUsers=userResult.users||[];
+    const imageResult=await apiRequest("/api/admin/images");
     state.adminImages=imageResult.images||[];
-    $("#adminUserCount").textContent=state.adminUsers.length;
+    state.adminUsers=[];
+    if(role==="admin"){
+      const userResult=await apiRequest("/api/admin/users");
+      state.adminUsers=userResult.users||[];
+      renderAdminUsers();
+    }
+    $("#adminUserCount").textContent=role==="admin"?state.adminUsers.length:"—";
     $("#adminImageCount").textContent=state.adminImages.length;
     $("#adminCategoryCount").textContent=state.categories.length;
-    renderAdminUsers();
     renderAdminImages();
+    $("#adminImagesPanel").hidden=false;
+    $("#adminUsersPanel").hidden=true;
+    $$(".admin-tabs-simple button").forEach(item=>item.classList.toggle("is-active",item.dataset.adminTab==="images"));
   }catch(error){$("#adminImagesPanel").innerHTML=`<p class="form-error">${escapeHtml(error.message)}</p>`}
 }
 
@@ -1204,6 +1313,42 @@ $("#adminImagesPanel").addEventListener("click",async event=>{
     toast("Đã xóa bài đăng.");
   }catch(error){toast(error.message)}
   finally{button.disabled=false}
+});
+
+
+$("#adminUsersPanel").addEventListener("change",async event=>{
+  const select=event.target.closest("[data-admin-role-user]");
+  if(!select)return;
+  const userId=select.dataset.adminRoleUser;
+  const role=select.value;
+  select.disabled=true;
+  try{
+    const result=await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}/role`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})});
+    const index=state.adminUsers.findIndex(user=>String(user._id||user.id)===String(userId));
+    if(index>=0)state.adminUsers[index]={...state.adminUsers[index],role:result.user.role};
+    renderAdminUsers();
+    toast(result.message||"Đã cập nhật vai trò tài khoản.");
+  }catch(error){
+    toast(error.message||"Không thể cập nhật vai trò.");
+    await openAdminDashboard();
+  }
+});
+
+$("#adminUsersPanel").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-admin-delete-user]");
+  if(!button)return;
+  const userId=button.dataset.adminDeleteUser;
+  const user=state.adminUsers.find(item=>String(item._id||item.id)===String(userId));
+  if(!confirm(`Xóa vĩnh viễn tài khoản ${user?.email||"này"}? Bình luận, lượt thích, thông báo và tin nhắn liên quan cũng sẽ được dọn dẹp.`))return;
+  button.disabled=true;
+  try{
+    const result=await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`,{method:"DELETE"});
+    state.adminUsers=state.adminUsers.filter(item=>String(item._id||item.id)!==String(userId));
+    $("#adminUserCount").textContent=state.adminUsers.length;
+    renderAdminUsers();
+    toast(result.message||"Đã xóa tài khoản.");
+  }catch(error){toast(error.message||"Không thể xóa tài khoản.");}
+  finally{button.disabled=false;}
 });
 
 async function loadImagesFromS3(){

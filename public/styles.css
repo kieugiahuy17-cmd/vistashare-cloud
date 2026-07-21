@@ -102,3 +102,11 @@
 .conversation-item{position:relative}
 .conversation-unread{display:grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#e11d48;color:#fff;font-size:.72rem}
 .message-bubble.system-message{align-self:center;max-width:90%;background:#f1f5f9;color:#64748b;text-align:center;font-style:italic}
+
+
+/* Hồ sơ công khai mở rộng */
+.profile-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;padding:0 1.5rem 1.25rem}.profile-info-item{display:flex;align-items:center;gap:.75rem;padding:.9rem 1rem;border:1px solid var(--border);border-radius:14px;background:#f8fafc}.profile-info-item>span{font-size:1.35rem}.profile-info-item small,.profile-info-item strong{display:block}.profile-info-item small{color:var(--muted);font-size:.76rem}.profile-info-item strong{margin-top:.2rem;font-size:.94rem}.profile-info-empty{grid-column:1/-1;margin:0;color:var(--muted)}.profile-links{display:flex;flex-wrap:wrap;gap:.55rem;padding:0 1.5rem 1.25rem}.profile-social-link{padding:.62rem .85rem;border:1px solid var(--border);border-radius:999px;color:var(--text);background:#fff;text-decoration:none;font-weight:800}.profile-social-link:hover{color:var(--primary);border-color:#93b4ff;background:#eff6ff}
+
+/* Quản trị tài khoản */
+.admin-user-row--managed{align-items:center;gap:1rem}.admin-user-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:.55rem}.admin-user-controls select{min-height:38px;padding:.45rem .65rem;border:1px solid var(--border);border-radius:10px;background:#fff}.admin-role-pill.is-moderator{color:#7c3aed;background:#f3e8ff}.admin-delete-user-button{min-height:38px;padding:0 .8rem;border:1px solid #fecaca;border-radius:10px;color:#b91c1c;background:#fff1f2;font-weight:800}.admin-delete-user-button:disabled{cursor:not-allowed;opacity:.45}
+@media(max-width:700px){.profile-info-grid{grid-template-columns:1fr;padding-inline:1rem}.profile-links{padding-inline:1rem}.admin-user-row--managed{align-items:flex-start;flex-direction:column}.admin-user-controls{justify-content:flex-start;width:100%}}

@@ -51,10 +51,16 @@ const userSchema = new mongoose.Schema(
         coverKey: { type: String, default: "" },
         country: { type: String, default: "", maxlength: 80 },
         city: { type: String, default: "", maxlength: 80 },
+        hometown: { type: String, default: "", maxlength: 100 },
+        relationship: { type: String, default: "", maxlength: 60 },
+        education: { type: String, default: "", maxlength: 120 },
+        workplace: { type: String, default: "", maxlength: 120 },
         facebook: { type: String, default: "", maxlength: 300 },
         instagram: { type: String, default: "", maxlength: 300 },
+        youtube: { type: String, default: "", maxlength: 300 },
+        tiktok: { type: String, default: "", maxlength: 300 },
         website: { type: String, default: "", maxlength: 300 },
-        role: { type: String, enum: ["user", "admin"], default: "user" }
+        role: { type: String, enum: ["user", "moderator", "admin"], default: "user" }
     },
     { timestamps: true }
 );
@@ -175,8 +181,14 @@ async function publicUser(user) {
         cover,
         country: user.country || "",
         city: user.city || "",
+        hometown: user.hometown || "",
+        relationship: user.relationship || "",
+        education: user.education || "",
+        workplace: user.workplace || "",
         facebook: user.facebook || "",
         instagram: user.instagram || "",
+        youtube: user.youtube || "",
+        tiktok: user.tiktok || "",
         website: user.website || "",
         createdAt: user.createdAt
     };
@@ -217,6 +229,13 @@ function requireAdmin(request, response, next) {
             success: false,
             message: "Chức năng này chỉ dành cho quản trị viên."
         });
+    }
+    next();
+}
+
+function requireModerator(request, response, next) {
+    if (!["moderator", "admin"].includes(request.user.role)) {
+        return response.status(403).json({ success: false, message: "Chức năng này chỉ dành cho kiểm duyệt viên hoặc quản trị viên." });
     }
     next();
 }
@@ -363,8 +382,14 @@ app.patch("/api/profile", requireAuth, async (request, response, next) => {
         request.user.bio = bio;
         request.user.country = String(request.body.country || "").trim();
         request.user.city = String(request.body.city || "").trim();
+        request.user.hometown = String(request.body.hometown || "").trim();
+        request.user.relationship = String(request.body.relationship || "").trim();
+        request.user.education = String(request.body.education || "").trim();
+        request.user.workplace = String(request.body.workplace || "").trim();
         request.user.facebook = String(request.body.facebook || "").trim();
         request.user.instagram = String(request.body.instagram || "").trim();
+        request.user.youtube = String(request.body.youtube || "").trim();
+        request.user.tiktok = String(request.body.tiktok || "").trim();
         request.user.website = String(request.body.website || "").trim();
 
         await request.user.save();
@@ -463,7 +488,7 @@ app.post("/api/categories", requireAuth, async (request, response, next) => {
             createdByRole: request.user.role,
             isSystem: false
         });
-        response.status(201).json({ success: true, message: "Đã thêm danh mục.", category });
+        response.status(201).json({ success: true, message: "Đã thêm danh mục thành công.", category });
     } catch (error) {
         next(error);
     }
@@ -475,7 +500,7 @@ app.delete("/api/categories/:id", requireAuth, async (request, response, next) =
         if (!category) {
             return response.status(404).json({ success: false, message: "Không tìm thấy danh mục." });
         }
-        const isAdmin = request.user.role === "admin";
+        const isAdmin = ["admin", "moderator"].includes(request.user.role);
         const isOwner = category.createdBy && category.createdBy.toString() === request.user._id.toString();
         if (!isAdmin && (!isOwner || category.isSystem)) {
             return response.status(403).json({ success: false, message: "Bạn chỉ được xóa danh mục do mình tạo." });
@@ -596,7 +621,7 @@ app.delete("/api/images", requireAuth, async (request, response, next) => {
         }));
         const ownerEmail = decodeMetadata(headResult.Metadata?.owner, "");
         const isOwner = ownerEmail && ownerEmail === request.user.email;
-        const isAdmin = request.user.role === "admin";
+        const isAdmin = ["admin", "moderator"].includes(request.user.role);
         if (!isOwner && !isAdmin) {
             return response.status(403).json({ success: false, message: "Bạn không có quyền xóa bài đăng này." });
         }
@@ -621,7 +646,39 @@ app.get("/api/admin/users", requireAuth, requireAdmin, async (request, response,
     }
 });
 
-app.get("/api/admin/images", requireAuth, requireAdmin, async (request, response, next) => {
+app.patch("/api/admin/users/:userId/role", requireAuth, requireAdmin, async (request, response, next) => {
+    try {
+        const allowedRoles = new Set(["user", "moderator", "admin"]);
+        const role = String(request.body.role || "").trim();
+        if (!allowedRoles.has(role)) return response.status(400).json({ success: false, message: "Vai trò không hợp lệ." });
+        if (String(request.params.userId) === String(request.user._id)) return response.status(400).json({ success: false, message: "Không thể tự thay đổi vai trò của tài khoản đang đăng nhập." });
+        const user = await User.findById(request.params.userId);
+        if (!user) return response.status(404).json({ success: false, message: "Không tìm thấy tài khoản." });
+        user.role = role;
+        await user.save();
+        response.json({ success: true, message: `Đã cập nhật vai trò thành ${role === "admin" ? "Quản trị viên" : role === "moderator" ? "Kiểm duyệt viên (MOD)" : "Thành viên"}.`, user: await publicUser(user) });
+    } catch (error) { next(error); }
+});
+
+app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (request, response, next) => {
+    try {
+        if (String(request.params.userId) === String(request.user._id)) return response.status(400).json({ success: false, message: "Không thể tự xóa tài khoản đang đăng nhập." });
+        const user = await User.findById(request.params.userId);
+        if (!user) return response.status(404).json({ success: false, message: "Không tìm thấy tài khoản." });
+        await Promise.all([
+            Like.deleteMany({ userId: user._id }),
+            Comment.deleteMany({ userId: user._id }),
+            Notification.deleteMany({ $or: [{ recipientId: user._id }, { actorId: user._id }] }),
+            Message.deleteMany({ $or: [{ senderId: user._id }, { receiverId: user._id }] }),
+            Conversation.deleteMany({ participants: user._id }),
+            Category.deleteMany({ createdBy: user._id, isSystem: false })
+        ]);
+        await user.deleteOne();
+        response.json({ success: true, message: "Đã xóa tài khoản và dữ liệu tương tác liên quan." });
+    } catch (error) { next(error); }
+});
+
+app.get("/api/admin/images", requireAuth, requireModerator, async (request, response, next) => {
     try {
         const images = await listS3Images();
         response.json({ success: true, images });
