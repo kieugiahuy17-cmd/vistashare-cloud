@@ -71,7 +71,7 @@ const categorySchema = new mongoose.Schema(
         name: { type: String, required: true, trim: true, minlength: 2, maxlength: 40 },
         normalizedName: { type: String, required: true, unique: true },
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
-        createdByRole: { type: String, enum: ["system", "user", "admin"], default: "user" },
+        createdByRole: { type: String, enum: ["system", "user", "moderator", "admin"], default: "user" },
         isSystem: { type: Boolean, default: false }
     },
     { timestamps: true }
